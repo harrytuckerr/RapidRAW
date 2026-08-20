@@ -15,8 +15,10 @@
 // sprinkling `#[allow]` per item.
 #![allow(dead_code)]
 
+pub mod interpolate;
 pub mod model;
 pub mod parser;
+pub mod render;
 
 // Added by W7 on its own branch; reconcile at merge by uncommenting.
 // pub mod look_xmp;
