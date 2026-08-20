@@ -15,6 +15,7 @@
 #![allow(dead_code)]
 
 pub mod camera_aliases;
+pub mod capture;
 pub mod commands;
 pub mod interpolate;
 pub mod look_xmp;
@@ -49,10 +50,7 @@ pub enum DcpError {
     /// A required Cobalt Look field was absent.
     MissingField(&'static str),
     /// A supplied value could not be interpreted (boolean, table, ...).
-    InvalidValue {
-        field: &'static str,
-        detail: String,
-    },
+    InvalidValue { field: &'static str, detail: String },
     /// The embedded look table (dng_big_table / dng_rgb_table) failed to decode.
     TableDecode(String),
 
@@ -64,10 +62,7 @@ pub enum DcpError {
     /// offset/length is corrupt.
     Truncated(String),
     /// A tag could not be parsed (wrong type, wrong count, unsupported value).
-    BadTag {
-        tag: u16,
-        detail: String,
-    },
+    BadTag { tag: u16, detail: String },
     /// A file or single tag exceeds a safety size limit.
     Oversized(String),
     /// Underlying filesystem/IO error.

@@ -83,6 +83,22 @@ pub enum LookGamut {
     Extend,
 }
 
+/// After parsing, check whether a captured `.cube` LUT (Route B) exists for
+/// this Look. If the table is currently `Unavailable` (Route A failed or
+/// wasn't attempted) and a capture file is on disk, upgrades to `Captured`.
+pub fn resolve_captured_table(captured_dir: &std::path::Path, look: &mut CobaltLook) {
+    if matches!(look.table, LookTableSource::Unavailable)
+        && let Some(cube_path) = crate::dcp::capture::find_captured_lut(captured_dir, &look.uuid)
+    {
+        log::info!(
+            "Cobalt Look `{}` resolved via Route B capture: {}",
+            look.uuid,
+            cube_path.display()
+        );
+        look.table = LookTableSource::Captured { cube_path };
+    }
+}
+
 /// A decoded Cobalt RGB look table (`dng_rgb_table`).
 ///
 /// Samples are stored as `u16` **deltas** from a neutral identity ramp; the

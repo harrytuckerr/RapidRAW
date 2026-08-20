@@ -2329,6 +2329,8 @@ pub fn run() {
             dcp::commands::import_profiles,
             dcp::commands::remove_profile,
             dcp::commands::rescan_profiles,
+            dcp::commands::export_identity_hald,
+            dcp::commands::import_captured_lut,
             fetch_community_presets,
             generate_all_community_previews,
             save_temp_file,

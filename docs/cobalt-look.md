@@ -60,18 +60,65 @@ interoperability for files the user already owns (spec section 8.3).
 
 ## Route B (Profile Capture) - documented fallback
 
-If native decoding ever breaks for a future Look version, Route B captures the
-Look via an ACR round-trip using machinery RapidRAW already has:
+Route A (native decode) is preferred and works for all 17 supplied Looks. Route B
+is the fallback for future Look versions whose embedded table cannot be decoded,
+or for non-Cobalt ACR profiles that carry no embedded table at all. It is a
+**full ACR round-trip capture** using machinery RapidRAW already ships:
 `generate_identity_lut_image` and `convert_image_to_cube_lut` in
-`src-tauri/src/lut_processing.rs` (verify line numbers before use). Workflow:
-export an identity HALD (16-bit TIFF, size 33 or 64) from RapidRAW; open in
-Lightroom/ACR with the Cobalt Look at Amount 100 and all other controls zeroed;
-export 16-bit TIFF; re-import into RapidRAW, which runs
-`convert_image_to_cube_lut` and stores the result linked to the Look's `UUID`
-and `RGBTable` id.
+`src-tauri/src/lut_processing.rs` (verified at lines 430 and 450 respectively).
 
-**Honest caveat:** a 3-D RGB LUT cannot capture behaviour that depends on
-scene-referred data outside [0,1], so highlight roll-off above clipping may
-differ slightly from ACR. Mitigate by capturing in a wide, log-ish encoding and
-documenting the limitation. Route A has no such limitation, which is why it is
-preferred now that it works.
+### Workflow for the user
+
+1. **Export the identity HALD.** In RapidRAW, select the Look in the profile
+   browser and choose "Capture profile…". RapidRAW writes a 16-bit TIFF
+   identity HALD image to the path you choose. The default grid size is 33
+   (fast; 35937 pixels). 64 gives finer interpolation at the cost of a larger
+   file (262144 pixels).
+
+2. **Process in ACR/Lightroom.** Open the exported TIFF in Lightroom or Adobe
+   Camera Raw. Set:
+   - **Profile = the Cobalt Look you want to capture**, Amount 100.
+   - **Every other control zeroed** — exposure, contrast, tone curve linear,
+     no sharpening, no noise reduction, no lens corrections, no vignetting.
+   - Export **16-bit TIFF**, ProPhoto RGB, full resolution, no output
+     sharpening.
+
+3. **Import the processed HALD.** Back in RapidRAW, select the same Look and
+   choose "Import captured LUT…", pointing to the TIFF you exported from ACR.
+   RapidRAW converts it to a `.cube` 3-D LUT, saves it linked to the Look's
+   UUID, and upgrades the Look from "table unavailable" to "captured".
+
+4. **The capture persists.** The `.cube` file lives in
+   `{app_data}/profiles/looks/captured/<uuid>.cube` and is picked up
+   automatically on next launch. You only need to capture once per Look.
+
+### Honest caveat — highlight roll-off
+
+A 3-D RGB LUT with domain [0,1]³ cannot capture behaviour that depends on
+scene-referred data outside the [0,1] range. ACR's rendering pipeline can
+apply the Look to values above 1.0 (scene-linear highlights before tone
+mapping) and then roll them off. The captured LUT only sees post-clip [0,1]
+inputs, so **highlight roll-off above clipping may differ slightly from ACR**
+— particularly in specular highlights and bright skies where the original
+Look applies a gentle shoulder.
+
+Mitigations:
+- **Capture at size 64** instead of 33 — finer grid spacing reduces
+  interpolation error near the top end, where the gradient is steepest.
+- **Pre-process the HALD through a wide log encoding** before ACR if you
+  need highlight fidelity. The `.cube` file records whatever transform was
+  applied to [0,1] samples; a log encoding redistributes precision towards
+  shadows where it matters more.
+- **Route A has no such limitation** (the native table decoder recovers the
+  full scene-referred transform), which is why it is preferred now that it
+  works for all supplied Looks.
+
+### Technical notes for W4/W3
+
+The captured LUT is a standard `.cube` 3-D RGB LUT with `DOMAIN_MIN 0.0 0.0 0.0`
+and `DOMAIN_MAX 1.0 1.0 1.0`. It is applied at stage 7 of the §3.1 pipeline
+(ProPhoto primaries, 1.8 gamma encoding) via trilinear interpolation —
+mechanically identical to the existing creative LUT stage, just placed at the
+Cobalt Look position in the chain. The Amount slider (§4.5) lerps between
+identity and the table output: `out = lerp(identity, table_out, k)` where
+`k = amount` (default 1.0, range 0.2–1.5 for these Looks).

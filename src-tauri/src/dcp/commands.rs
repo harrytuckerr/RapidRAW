@@ -437,6 +437,79 @@ pub fn rescan_profiles(app_handle: AppHandle, state: State<'_, AppState>) -> Res
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// W7 Route B — Profile Capture commands
+// ---------------------------------------------------------------------------
+
+/// Export an identity HALD image (16-bit TIFF) for a Cobalt Look.
+///
+/// This is step 1 of Route B (Profile Capture): the user exports the HALD,
+/// opens it in ACR/Lightroom with the Cobalt Look at Amount 100 and all other
+/// controls zeroed, exports a 16-bit TIFF, then imports it back via
+/// `import_captured_lut`.
+///
+/// `look_id` is the Look's `crs:UUID` (used for naming/debugging, not
+/// strictly required for the file). `path` is the destination filesystem
+/// path where the TIFF will be written; the caller should supply a `.tif` or
+/// `.tiff` extension. `size` defaults to 33 (recommended; 64 also supported
+/// for finer grids).
+#[tauri::command]
+pub fn export_identity_hald(
+    _look_id: String,
+    path: String,
+    size: Option<u32>,
+    _state: State<'_, AppState>,
+) -> Result<(), String> {
+    let dest = PathBuf::from(&path);
+    let grid = size.unwrap_or(33);
+    crate::dcp::capture::export_identity_hald(&dest, grid)
+}
+
+/// Import a processed HALD TIFF (after the user applied the Cobalt Look in
+/// ACR) and convert it to a `.cube` 3-D LUT linked to the Look.
+///
+/// This is step 2 of Route B. `look_id` must be the Look's `crs:UUID` — the
+/// captured `.cube` is saved as `captured/<uuid>.cube` under the managed
+/// looks directory. `path` is the filesystem path to the 16-bit TIFF the user
+/// exported from ACR.
+///
+/// On success the LUT is immediately available: future parses of the Look
+/// will resolve it via `LookTableSource::Captured`. The user must re-select
+/// or re-apply the Look in the UI to see the change take effect.
+#[tauri::command]
+pub fn import_captured_lut(
+    look_id: String,
+    path: String,
+    app_handle: AppHandle,
+    _state: State<'_, AppState>,
+) -> Result<(), String> {
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let captured_dir = crate::dcp::capture::captured_luts_dir(&data_dir);
+    let tiff_path = Path::new(&path);
+
+    if !tiff_path.exists() {
+        return Err(format!(
+            "processed HALD file not found: '{}'",
+            tiff_path.display()
+        ));
+    }
+
+    let cube_filename = format!("{look_id}.cube");
+    let cube_path = captured_dir.join(&cube_filename);
+
+    crate::dcp::capture::capture_to_cube(tiff_path, &cube_path)?;
+
+    log::info!(
+        "Route B capture for look `{look_id}` saved to {}",
+        cube_path.display()
+    );
+
+    Ok(())
+}
+
 /// Spawn a background discovery pass and emit `profiles-rescanned` when done.
 fn spawn_rescan(app_handle: AppHandle, registry: Arc<ProfileRegistry>, data_dir: PathBuf) {
     std::thread::spawn(move || {
