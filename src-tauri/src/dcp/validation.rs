@@ -152,6 +152,7 @@ mod tests {
     use super::*;
     use crate::dcp::delta_e::prophoto_delta_e;
     use crate::dcp::render::DcpRenderer;
+    use wgpu::util::DeviceExt;
 
     /// The XYZ→ProPhoto D50 matrix from render.rs — needed for delta-E
     /// computation in ProPhoto space.
@@ -505,15 +506,17 @@ mod tests {
         }
 
         // ---- 4. GPU render (headless wgpu compute) --------------------------
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
+        );
         let adapter = match pollster::block_on(instance.request_adapter(
             &wgpu::RequestAdapterOptions::default(),
         )) {
-            Some(a) => a,
-            None => { eprintln!("GPU parity: no adapter — skipping"); return; }
+            Ok(a) => a,
+            Err(e) => { eprintln!("GPU parity: no adapter ({e}) — skipping"); return; }
         };
         let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor::default(), None,
+            &wgpu::DeviceDescriptor::default(),
         )) {
             Ok(dq) => dq,
             Err(e) => { eprintln!("GPU parity: device error {e} — skipping"); return; }
@@ -580,7 +583,7 @@ mod tests {
         // Compile the minimal DCP-only shader.
         let sm = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("p-sm"), source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/dcp_parity.wgsl").into()),
+                include_str!("../shaders/dcp_parity.wgsl").into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

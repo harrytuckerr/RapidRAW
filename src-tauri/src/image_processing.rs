@@ -1505,6 +1505,18 @@ pub struct GlobalAdjustments {
     pub halation_amount: f32,
     pub flare_amount: f32,
     pub sharpness_threshold: f32,
+
+    // --- DCP profile pipeline (W3 GPU/WGSL) -------------------------------
+    pub has_dcp: u32,
+    pub dcp_amount: f32,
+    pub dcp_look_encoding: u32,
+    pub dcp_huesat_encoding: u32,
+    // vec4<u32> in WGSL — 16 bytes each, alignment 16
+    pub dcp_huesat_dims: [u32; 4], // [hue_div, sat_div, val_div, _pad]
+    pub dcp_look_dims: [u32; 4],   // [hue_div, sat_div, val_div, _pad]
+    // mat3x3<f32> — 48 bytes each, alignment 16 (GpuMat3 = 3 × [f32;4])
+    pub cam_to_prophoto: GpuMat3,
+    pub prophoto_to_working: GpuMat3,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable, Default)]
@@ -2328,6 +2340,18 @@ fn get_global_adjustments_from_json(
             SCALES.sharpness_threshold,
             Some(15.0),
         ),
+
+        // DCP profile — W3 populates these; W4 wires from profile selection.
+        // When has_dcp == 0 the GPU shader early-outs and output is bit-identical
+        // to upstream (acceptance criterion).
+        has_dcp: 0,
+        dcp_amount: 1.0,
+        dcp_look_encoding: 0,
+        dcp_huesat_encoding: 0,
+        dcp_huesat_dims: [0, 0, 0, 0],
+        dcp_look_dims: [0, 0, 0, 0],
+        cam_to_prophoto: GpuMat3::default(),
+        prophoto_to_working: GpuMat3::default(),
     }
 }
 
