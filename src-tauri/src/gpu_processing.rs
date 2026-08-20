@@ -986,7 +986,11 @@ impl GpuProcessor {
         // The shader early-outs (has_dcp == 0) so their content is never sampled.
         let dcp_dummy_3d = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("DCP Dummy 3D"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D3,
@@ -1001,7 +1005,11 @@ impl GpuProcessor {
             queue,
             &wgpu::TextureDescriptor {
                 label: Some("DCP Dummy Tone Curve"),
-                size: wgpu::Extent3d { width: 4096, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 4096,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D1,
