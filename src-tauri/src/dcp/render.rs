@@ -20,32 +20,87 @@
 
 use crate::dcp::DcpError;
 use crate::dcp::interpolate::{
-    cct_of_illuminant, interpolate_matrix, mireds_weight, solve_neutral_cct, xy_of_blackbody,
-    xy_of_daylight,
+    cct_of_illuminant, cct_of_xy, interpolate_matrix, interpolation_weight, neutral_to_xy,
+    xy_of_blackbody, xy_of_daylight,
 };
 use crate::dcp::model::{DcpProfile, HsvTable, Illuminant, Mat3, TableEncoding};
 use rayon::prelude::*;
 
 // ---- colour space matrices ---------------------------------------------------
 
-/// XYZ(D50) → linear ProPhoto RGB (ROMM), standard matrix.
-const XYZ_TO_PROPHOTO_D50: [f32; 9] = [
-    1.3459433, -0.2556075, -0.0511118, -0.5445989, 1.5081673, 0.0205351, 0.0, 0.0, 1.2118128,
+/// XYZ(D50) → linear ProPhoto RGB (ROMM), computed from primaries using
+/// dng_sdk D50_xy_coord() = (0.3457, 0.3585). The previous constant was built
+/// for the ISO D50 (0.34567, 0.35850) and produced a ~1e-4 non-neutrality
+/// when the ForwardMatrix rows did not sum to exactly that white point.
+/// NormalizeForwardMatrix (below) corrects the FM at load time; this matrix
+/// must then be built for the SAME D50, otherwise the neutral axis is off.
+const XYZ_TO_PROPHOTO_D50: [f64; 9] = [
+    1.345_786_881_647_158_5,
+    -0.255_572_087_379_794_64,
+    -0.051_101_864_975_545_26,
+    -0.544_630_705_124_901_9,
+    1.508_247_742_845_146_8,
+    0.020_527_447_436_421_39,
+    0.0,
+    0.0,
+    1.211_967_545_638_945_2,
 ];
 
-/// Linear ProPhoto RGB → XYZ(D50), standard matrix (inverse of the above).
-const PROPHOTO_TO_XYZ_D50: [f32; 9] = [
-    0.797760, 0.135185, 0.031349, 0.288071, 0.711843, 0.000086, 0.0, 0.0, 0.825105,
+/// Bradford chromatic-adaptation cone-response matrix (fixed, from the
+/// Bradford 1996 model - source-independent).
+const BRADFORD_CONE: [f64; 9] = [
+    0.8951000, 0.2664000, -0.1614000, -0.7502000, 1.7135000, 0.0367000, 0.0389000, -0.0685000,
+    1.0296000,
 ];
 
-/// Bradford chromatic adaptation matrix, D50 → D65.
-const BRADFORD_D50_TO_D65: [f32; 9] = [
-    0.9554739, -0.0230987, 0.0632593, -0.0283697, 1.0099953, 0.0210414, 0.0123141, -0.0205074,
-    1.3303659,
-];
+/// Compute a Bradford adaptation matrix from source white (xy) to destination
+/// white (xy) in f64. This guarantees the adaptation maps the source white
+/// point to the destination white point exactly, which a stored constant
+/// cannot do because published Bradford matrices use slightly different white
+/// point values.
+fn bradford_adapt_matrix(src_xy: (f64, f64), dst_xy: (f64, f64)) -> nalgebra::Matrix3<f64> {
+    let m = mat3_from_row_major_f64(&BRADFORD_CONE);
+    let m_inv = m
+        .try_inverse()
+        .unwrap_or_else(nalgebra::Matrix3::<f64>::identity);
 
-/// XYZ(D65) → linear sRGB/Rec.709 (RapidRAW's working space primaries).
-const XYZ_TO_SRGB_D65: [f32; 9] = [
+    // xy -> XYZ (Y = 1).
+    let src_xyz = nalgebra::Vector3::new(
+        src_xy.0 / src_xy.1,
+        1.0,
+        (1.0 - src_xy.0 - src_xy.1) / src_xy.1,
+    );
+    let dst_xyz = nalgebra::Vector3::new(
+        dst_xy.0 / dst_xy.1,
+        1.0,
+        (1.0 - dst_xy.0 - dst_xy.1) / dst_xy.1,
+    );
+
+    let src_cone = m * src_xyz;
+    let dst_cone = m * dst_xyz;
+    let d = nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(
+        dst_cone[0] / src_cone[0],
+        dst_cone[1] / src_cone[1],
+        dst_cone[2] / src_cone[2],
+    ));
+    m_inv * d * m
+}
+
+/// dng_sdk dng_camera_profile::NormalizeForwardMatrix.
+/// ForwardMatrix rows are SRATIONAL-quantised and do not sum to exactly D50;
+/// without this the neutral axis is off by ~1e-4 and no ProPhoto constant can
+/// fix it. Must be applied to FM1 and FM2 individually BEFORE interpolation.
+fn normalize_forward_matrix(m: &nalgebra::Matrix3<f64>) -> nalgebra::Matrix3<f64> {
+    let camera_one = nalgebra::Vector3::new(1.0, 1.0, 1.0);
+    let rows = m * camera_one;
+    let s = rows[0] + rows[1] + rows[2];
+    let src_xy = (rows[0] / s, rows[1] / s);
+    // Bradford-adapt from the FM's implicit white to canonical D50.
+    bradford_adapt_matrix(src_xy, D50_XY) * m
+}
+
+/// XYZ(D65) -> linear sRGB/Rec.709 (RapidRAW's working space primaries).
+const XYZ_TO_SRGB_D65: [f64; 9] = [
     3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434, -0.2040259,
     1.0572252,
 ];
@@ -53,13 +108,20 @@ const XYZ_TO_SRGB_D65: [f32; 9] = [
 /// White point of the D65 working space.
 const WP_D65_XY: (f64, f64) = (0.3127, 0.3290);
 
+/// dng_sdk D50_xy_coord(). The ONE D50 in this crate. Do not introduce another.
+/// XYZ: [0.9642956764, 1.0, 0.8251046025].
+pub const D50_XY: (f64, f64) = (0.3457, 0.3585);
+
 /// Number of samples in the resampled tone-curve LUT.
 const TONE_CURVE_LUT_SIZE: usize = 4096;
 
 fn mat3_from_row_major(v: &[f32; 9]) -> Mat3 {
-    Mat3::new(
-        v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8],
-    )
+    Mat3::new(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8])
+}
+
+/// Build a `nalgebra::Matrix3<f64>` from row-major `[f64; 9]` constants.
+fn mat3_from_row_major_f64(v: &[f64; 9]) -> nalgebra::Matrix3<f64> {
+    nalgebra::Matrix3::new(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8])
 }
 
 /// How the profile tone curve is applied to an RGB pixel.
@@ -121,28 +183,58 @@ impl DcpRenderer {
             None => t1,
         };
 
-        let neutral_cct =
-            solve_neutral_cct(&profile.color_matrix_1, profile.color_matrix_2.as_ref(), t1, t2, as_shot_neutral);
-        let g = mireds_weight(neutral_cct, t1, t2);
+        let cm2_ref = profile
+            .color_matrix_2
+            .as_ref()
+            .unwrap_or(&profile.color_matrix_1);
+        let (nx, ny) = neutral_to_xy(
+            [
+                as_shot_neutral[0] as f64,
+                as_shot_neutral[1] as f64,
+                as_shot_neutral[2] as f64,
+            ],
+            &profile.color_matrix_1,
+            cm2_ref,
+            t1,
+            t2,
+        );
+        let neutral_cct = cct_of_xy(nx, ny);
+        let g = interpolation_weight(neutral_cct, t1, t2);
 
         let color_matrix = match &profile.color_matrix_2 {
             Some(cm2) => interpolate_matrix(&profile.color_matrix_1, cm2, g),
             None => profile.color_matrix_1,
         };
-        let camera_calibration = match (&profile.camera_calibration_1, &profile.camera_calibration_2) {
-            (Some(cc1), Some(cc2)) => Some(interpolate_matrix(cc1, cc2, g)),
-            (Some(cc), None) | (None, Some(cc)) => Some(*cc),
-            (None, None) => None,
-        };
+        let camera_calibration =
+            match (&profile.camera_calibration_1, &profile.camera_calibration_2) {
+                (Some(cc1), Some(cc2)) => Some(interpolate_matrix(cc1, cc2, g)),
+                (Some(cc), None) | (None, Some(cc)) => Some(*cc),
+                (None, None) => None,
+            };
         let forward_matrix = match (&profile.forward_matrix_1, &profile.forward_matrix_2) {
-            (Some(fm1), Some(fm2)) => Some(interpolate_matrix(fm1, fm2, g)),
-            (Some(fm), None) | (None, Some(fm)) => Some(*fm),
+            (Some(fm1), Some(fm2)) => {
+                // Normalise each ForwardMatrix to D50 BEFORE interpolation
+                // (dng_sdk dng_camera_profile::NormalizeForwardMatrix).
+                // Without this the neutral axis is off by ~1e-4 because
+                // SRATIONAL-quantised FM rows don't sum to exactly D50.
+                let fm1_norm = normalize_forward_matrix(&fm1.cast::<f64>());
+                let fm2_norm = normalize_forward_matrix(&fm2.cast::<f64>());
+                // Interpolate in f64, then downcast to f32 for the profile store.
+                let fm_interp = fm1_norm * g + fm2_norm * (1.0 - g);
+                Some(fm_interp.cast::<f32>())
+            }
+            (Some(fm), None) | (None, Some(fm)) => {
+                let fm_norm = normalize_forward_matrix(&fm.cast::<f64>());
+                Some(fm_norm.cast::<f32>())
+            }
             (None, None) => None,
         };
 
-        // ---- §4.3 camera → XYZ(D50) -------------------------------------
-        let cam_to_xyz_d50 = match forward_matrix {
-            Some(fm) => build_cam_to_xyz_d50_forward(
+        // ---- §4.3 camera → XYZ(D50) — computed in f64, downcast at end ---
+        let xyz_to_prophoto_f64 = mat3_from_row_major_f64(&XYZ_TO_PROPHOTO_D50);
+
+        let cam_to_xyz_d50_f64 = match forward_matrix {
+            Some(fm) => build_cam_to_xyz_d50_forward_f64(
                 &fm,
                 camera_calibration.as_ref(),
                 profile.analog_balance,
@@ -151,7 +243,7 @@ impl DcpRenderer {
             None => {
                 // Fallback: invert the ColorMatrix, then Bradford-adapt from the
                 // calibration illuminant's white point to D50.
-                build_cam_to_xyz_d50_fallback(
+                build_cam_to_xyz_d50_fallback_f64(
                     &color_matrix,
                     camera_calibration.as_ref(),
                     profile.analog_balance,
@@ -161,30 +253,52 @@ impl DcpRenderer {
             }
         };
 
-        // camera → ProPhoto.
-        let xyz_to_prophoto = mat3_from_row_major(&XYZ_TO_PROPHOTO_D50).cast::<f64>();
-        let cam_to_prophoto = (xyz_to_prophoto * cam_to_xyz_d50.cast::<f64>()).cast::<f32>();
+        // camera → ProPhoto in f64, downcast to a single f32 matrix.
+        // This is M1 from the brief: (XYZ_D50 → ProPhoto) · cam2xyz_D50.
+        let cam_to_prophoto = (xyz_to_prophoto_f64 * cam_to_xyz_d50_f64).cast::<f32>();
 
         // ProPhoto → RapidRAW working space (sRGB primaries, D65) including
-        // D50 → D65 Bradford adaptation.
-        let prophoto_to_xyz = mat3_from_row_major(&PROPHOTO_TO_XYZ_D50).cast::<f64>();
-        let bradford = mat3_from_row_major(&BRADFORD_D50_TO_D65).cast::<f64>();
-        let xyz_to_srgb = mat3_from_row_major(&XYZ_TO_SRGB_D65).cast::<f64>();
-        let prophoto_to_working = (xyz_to_srgb * bradford * prophoto_to_xyz).cast::<f32>();
+        // D50 → D65 Bradford adaptation. M2 from the brief.
+        // Compute ProPhoto→XYZ as the f64 inverse of XYZ→ProPhoto to guarantee
+        // they are exact inverses (the f32 published constants are approximations
+        // whose product differs from identity by ~1e-4, which propagates into
+        // every neutral-axis and identity test).
+        let prophoto_to_xyz_f64 = xyz_to_prophoto_f64
+            .try_inverse()
+            .unwrap_or_else(nalgebra::Matrix3::<f64>::identity);
+        let bradford_f64 = bradford_adapt_matrix(D50_XY, WP_D65_XY);
+        // Normalise the sRGB matrix so each row maps D65 white to exactly 1.0.
+        // The published constant values are rounded and don't map D65 white to
+        // [1,1,1] exactly (off by ~0.003), which propagates into a ~1e-4
+        // non-neutrality in the composed ProPhoto->working matrix.
+        let xyz_to_srgb_raw = mat3_from_row_major_f64(&XYZ_TO_SRGB_D65);
+        let d65_xyz = nalgebra::Vector3::new(
+            WP_D65_XY.0 / WP_D65_XY.1,
+            1.0,
+            (1.0 - WP_D65_XY.0 - WP_D65_XY.1) / WP_D65_XY.1,
+        );
+        let row_scales = nalgebra::Vector3::new(
+            1.0 / (xyz_to_srgb_raw.row(0).transpose().dot(&d65_xyz)),
+            1.0 / (xyz_to_srgb_raw.row(1).transpose().dot(&d65_xyz)),
+            1.0 / (xyz_to_srgb_raw.row(2).transpose().dot(&d65_xyz)),
+        );
+        let xyz_to_srgb_f64 = nalgebra::Matrix3::from_diagonal(&row_scales) * xyz_to_srgb_raw;
+        let prophoto_to_working =
+            (xyz_to_srgb_f64 * bradford_f64 * prophoto_to_xyz_f64).cast::<f32>();
 
         // ---- §4.4 rendering tables --------------------------------------
-        let hue_sat_map = match &profile.hue_sat_map {
-            Some(dual) => Some(interpolate_dual_hue_sat_map(dual, g)),
-            None => None,
-        };
+        let hue_sat_map = profile
+            .hue_sat_map
+            .as_ref()
+            .map(|dual| interpolate_dual_hue_sat_map(dual, g));
 
         let look_table = profile.look_table.clone();
 
         // Resample the tone curve to a uniform LUT over [0, 1].
-        let tone_curve_lut = match &profile.tone_curve {
-            Some(curve) => Some(resample_tone_curve(&curve.points)),
-            None => None,
-        };
+        let tone_curve_lut = profile
+            .tone_curve
+            .as_ref()
+            .map(|curve| resample_tone_curve(&curve.points));
 
         let baseline_exposure_offset = profile.baseline_exposure_offset.unwrap_or(0.0);
 
@@ -282,15 +396,59 @@ pub enum AboveOneChoice {
 // ---- §4.3 matrix composition ------------------------------------------------
 
 /// Forward-matrix path: `camToXYZ_D50 = FM * D * Inverse(AB * CC)` (§4.3).
-fn build_cam_to_xyz_d50_forward(
+/// Computed entirely in f64, downcast to f32 only after the full chain is
+/// composed in [`DcpRenderer::new`] (§6.W2 / Group D).
+fn build_cam_to_xyz_d50_forward_f64(
     forward_matrix: &Mat3,
     camera_calibration: Option<&Mat3>,
     analog_balance: Option<[f32; 3]>,
     as_shot_neutral: [f32; 3],
-) -> Result<Mat3, DcpError> {
-    let (ab_cc_inv, ref_neutral) = calibration_scale(camera_calibration, analog_balance, as_shot_neutral)?;
-    let d = invert_diagonal(ref_neutral)?;
-    Ok(forward_matrix * d * ab_cc_inv)
+) -> Result<nalgebra::Matrix3<f64>, DcpError> {
+    let (ab_cc_inv, ref_neutral) =
+        calibration_scale_f64(camera_calibration, analog_balance, as_shot_neutral)?;
+    let d = invert_diagonal_f64(ref_neutral)?;
+    let fm = forward_matrix.cast::<f64>();
+    Ok(fm * d * ab_cc_inv)
+}
+
+/// No-ForwardMatrix fallback (f64): invert the interpolated ColorMatrix,
+/// white balance, then Bradford-adapt from the calibration illuminant's
+/// white point to D50 (§4.3). Returns `camToXYZ_D50` in f64 for composition.
+fn build_cam_to_xyz_d50_fallback_f64(
+    color_matrix: &Mat3,
+    camera_calibration: Option<&Mat3>,
+    analog_balance: Option<[f32; 3]>,
+    as_shot_neutral: [f32; 3],
+    illuminant: Illuminant,
+) -> Result<nalgebra::Matrix3<f64>, DcpError> {
+    let (ab_cc_inv, ref_neutral) =
+        calibration_scale_f64(camera_calibration, analog_balance, as_shot_neutral)?;
+    let d = invert_diagonal_f64(ref_neutral)?;
+
+    let cm_inv =
+        color_matrix
+            .cast::<f64>()
+            .try_inverse()
+            .ok_or_else(|| DcpError::InvalidValue {
+                field: "ColorMatrix",
+                detail: "ColorMatrix is singular; cannot invert for the no-ForwardMatrix path"
+                    .into(),
+            })?;
+
+    // camera → XYZ in the calibration illuminant, white-balanced.
+    let cam_to_xyz_illum = cm_inv * d * ab_cc_inv;
+
+    // Calibration illuminant white point → D50 Bradford adaptation.
+    let temp = cct_of_illuminant(illuminant)?;
+    let src_xy = if temp >= 4000.0 {
+        xy_of_daylight(temp)
+    } else {
+        xy_of_blackbody(temp)
+    };
+    // D50 white point xy (dng_sdk D50_xy_coord).
+    let adapt = bradford_adaptation(src_xy, D50_XY);
+
+    Ok(adapt * cam_to_xyz_illum)
 }
 
 /// No-ForwardMatrix fallback: invert the interpolated ColorMatrix, white
@@ -302,7 +460,8 @@ fn build_cam_to_xyz_d50_fallback(
     as_shot_neutral: [f32; 3],
     illuminant: Illuminant,
 ) -> Result<Mat3, DcpError> {
-    let (ab_cc_inv, ref_neutral) = calibration_scale(camera_calibration, analog_balance, as_shot_neutral)?;
+    let (ab_cc_inv, ref_neutral) =
+        calibration_scale(camera_calibration, analog_balance, as_shot_neutral)?;
     let d = invert_diagonal(ref_neutral)?;
 
     let cm_inv = color_matrix
@@ -340,7 +499,9 @@ fn calibration_scale(
         Some(b) => nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(b[0], b[1], b[2])),
         None => nalgebra::Matrix3::<f32>::identity(),
     };
-    let cc = camera_calibration.copied().unwrap_or_else(nalgebra::Matrix3::identity);
+    let cc = camera_calibration
+        .copied()
+        .unwrap_or_else(nalgebra::Matrix3::identity);
     let ab_cc = ab * cc;
 
     let ab_cc_inv = ab_cc
@@ -357,7 +518,62 @@ fn calibration_scale(
     Ok((ab_cc_inv, ref_neutral))
 }
 
-/// `D = Invert(Diagonal(refNeutral))`, guarding near-zero components.
+/// Compute `Inverse(AB * CC)` and `refNeutral = Inverse(AB * CC) * as_shot_neutral`
+/// (§4.3) in f64 for composition in [`DcpRenderer::new`].
+fn calibration_scale_f64(
+    camera_calibration: Option<&Mat3>,
+    analog_balance: Option<[f32; 3]>,
+    as_shot_neutral: [f32; 3],
+) -> Result<(nalgebra::Matrix3<f64>, nalgebra::Vector3<f64>), DcpError> {
+    let ab = match analog_balance {
+        Some(b) => nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(
+            b[0] as f64,
+            b[1] as f64,
+            b[2] as f64,
+        )),
+        None => nalgebra::Matrix3::<f64>::identity(),
+    };
+    let cc = camera_calibration
+        .copied()
+        .unwrap_or_else(nalgebra::Matrix3::identity)
+        .cast::<f64>();
+    let ab_cc = ab * cc;
+
+    let ab_cc_inv = ab_cc.try_inverse().ok_or_else(|| DcpError::InvalidValue {
+        field: "AnalogBalance/CameraCalibration",
+        detail: "AB * CC matrix is singular (f64)".into(),
+    })?;
+
+    let n = nalgebra::Vector3::new(
+        as_shot_neutral[0] as f64,
+        as_shot_neutral[1] as f64,
+        as_shot_neutral[2] as f64,
+    );
+    let ref_neutral = ab_cc_inv * n;
+    Ok((ab_cc_inv, ref_neutral))
+}
+
+/// `D = Invert(Diagonal(refNeutral))` in f64, guarding near-zero components.
+fn invert_diagonal_f64(
+    ref_neutral: nalgebra::Vector3<f64>,
+) -> Result<nalgebra::Matrix3<f64>, DcpError> {
+    let mut out = nalgebra::Matrix3::<f64>::identity();
+    for i in 0..3 {
+        let v = ref_neutral[i];
+        if v.abs() < 1e-12 {
+            return Err(DcpError::InvalidValue {
+                field: "AsShotNeutral",
+                detail: format!(
+                    "camera neutral component {i} is ~zero ({v}); cannot white-balance"
+                ),
+            });
+        }
+        out[(i, i)] = 1.0 / v;
+    }
+    Ok(out)
+}
+
+/// `D = Invert(Diagonal(refNeutral))` (f32), guarding near-zero components.
 fn invert_diagonal(ref_neutral: nalgebra::Vector3<f32>) -> Result<Mat3, DcpError> {
     let mut out = Mat3::identity();
     for i in 0..3 {
@@ -365,7 +581,9 @@ fn invert_diagonal(ref_neutral: nalgebra::Vector3<f32>) -> Result<Mat3, DcpError
         if v.abs() < 1e-12 {
             return Err(DcpError::InvalidValue {
                 field: "AsShotNeutral",
-                detail: format!("camera neutral component {i} is ~zero ({v}); cannot white-balance"),
+                detail: format!(
+                    "camera neutral component {i} is ~zero ({v}); cannot white-balance"
+                ),
             });
         }
         out[(i, i)] = 1.0 / v;
@@ -452,30 +670,43 @@ fn apply_hsv_table(rgb: [f32; 3], table: &HsvTable, encoding: TableEncoding) -> 
 /// Trilinear (or bilinear when `val_div == 1`) interpolation of the table at
 /// fractional cell coordinates. Hue wraps (index `hue_div` → 0); saturation
 /// and value clamp at their upper edges.
+///
+/// Bracketing per spec §4.4.1 / W2 remediation brief: hue wraps on `hue_div`
+/// (360° maps back to index 0), sat/val clamp on `div − 1`. The degenerate
+/// `val_div == 1` case (2-D map) must be handled explicitly.
 fn sample_table(table: &HsvTable, hue_coord: f32, sat_coord: f32, val_coord: f32) -> [f32; 3] {
-    let h0 = hue_coord.floor() as i32;
-    let fh = hue_coord - h0 as f32;
+    let hue_div = table.hue_div as i32;
+    let sat_div = table.sat_div as i32;
+    let val_div = table.val_div as i32;
 
-    let s0 = (sat_coord.floor() as i32).clamp(0, table.sat_div as i32 - 2);
-    let fs = sat_coord - s0 as f32;
+    let hfl = hue_coord.floor();
+    let fh = hue_coord - hfl;
+    let h0 = (hfl as i32).rem_euclid(hue_div) as usize;
+    let h1 = (h0 + 1) % hue_div as usize;
 
-    let (v0, fv) = if table.val_div > 1 {
-        let v0 = (val_coord.floor() as i32).clamp(0, table.val_div as i32 - 2);
-        (v0, val_coord - v0 as f32)
+    let sf = (sat_coord * (sat_div - 1) as f32).clamp(0.0, (sat_div - 1) as f32);
+    let s0 = sf.floor() as usize;
+    let s1 = (s0 + 1).min(sat_div as usize - 1);
+    let fs = sf - s0 as f32;
+
+    let (v0, v1, fv) = if val_div <= 1 {
+        (0usize, 0usize, 0.0f32)
     } else {
-        (0, 0.0)
+        let vf = (val_coord * (val_div - 1) as f32).clamp(0.0, (val_div - 1) as f32);
+        let v0 = vf.floor() as usize;
+        (v0, (v0 + 1).min(val_div as usize - 1), vf - v0 as f32)
     };
 
     // Eight corners; `cell` wraps hue and clamps sat/val so the wrap and
     // clamp behaviour is centralised.
     let c000 = cell(table, h0, s0, v0);
-    let c100 = cell(table, h0 + 1, s0, v0);
-    let c010 = cell(table, h0, s0 + 1, v0);
-    let c110 = cell(table, h0 + 1, s0 + 1, v0);
-    let c001 = cell(table, h0, s0, v0 + 1);
-    let c101 = cell(table, h0 + 1, s0, v0 + 1);
-    let c011 = cell(table, h0, s0 + 1, v0 + 1);
-    let c111 = cell(table, h0 + 1, s0 + 1, v0 + 1);
+    let c100 = cell(table, h1, s0, v0);
+    let c010 = cell(table, h0, s1, v0);
+    let c110 = cell(table, h1, s1, v0);
+    let c001 = cell(table, h0, s0, v1);
+    let c101 = cell(table, h1, s0, v1);
+    let c011 = cell(table, h0, s1, v1);
+    let c111 = cell(table, h1, s1, v1);
 
     let w0 = (1.0 - fh) * (1.0 - fs) * (1.0 - fv);
     let w1 = fh * (1.0 - fs) * (1.0 - fv);
@@ -501,20 +732,17 @@ fn sample_table(table: &HsvTable, hue_coord: f32, sat_coord: f32, val_coord: f32
 }
 
 /// Read a single table cell, wrapping the hue index (mod `hue_div`) and
-/// clamping saturation/value. Data layout per the DNG spec and dng_sdk:
-/// hue slowest, then saturation, value fastest:
-/// `index = h * sat_div * val_div + s * val_div + v`.
-///
-/// ⚠️ Resolved VERIFY (spec §4.4.1 said "v outermost"; the actual vendor data
-/// and dng_sdk show value is the **innermost** dimension - see docs).
-fn cell(table: &HsvTable, h: i32, s: i32, v: i32) -> [f32; 3] {
-    let hue_div = table.hue_div as i32;
-    let sat_div = table.sat_div as i32;
-    let val_div = table.val_div as i32;
-    let h = h.rem_euclid(hue_div);
-    let s = s.clamp(0, sat_div - 1);
-    let v = v.clamp(0, val_div - 1);
-    let idx = (h * sat_div * val_div + s * val_div + v) as usize;
+/// clamping saturation/value. Data layout per spec §4.4.1:
+/// `v` outermost → `h` → `s` innermost:
+/// `index = (v * hue_div + h) * sat_div + s`.
+fn cell(table: &HsvTable, h: usize, s: usize, v: usize) -> [f32; 3] {
+    let hue_div = table.hue_div as usize;
+    let sat_div = table.sat_div as usize;
+    let val_div = table.val_div as usize;
+    let h = h % hue_div;
+    let s = s.min(sat_div - 1);
+    let v = v.min(val_div.max(1) - 1);
+    let idx = (v * hue_div + h) * sat_div + s;
     table.data[idx]
 }
 
@@ -661,7 +889,12 @@ fn eval_curve(points: &[[f32; 2]], x: f32) -> f32 {
 ///   (dng_sdk behaviour).
 /// - **Hue-preserving:** scale RGB by `curve(v)/v` using the value `v = max`.
 /// - **Above 1.0:** linear extrapolation from the last segment, or clamp.
-fn apply_tone_curve(rgb: [f32; 3], lut: &[f32], mode: ToneCurveMode, above_one: AboveOne) -> [f32; 3] {
+fn apply_tone_curve(
+    rgb: [f32; 3],
+    lut: &[f32],
+    mode: ToneCurveMode,
+    above_one: AboveOne,
+) -> [f32; 3] {
     match mode {
         ToneCurveMode::PerChannel => [
             eval_lut(lut, rgb[0], above_one),
@@ -761,7 +994,10 @@ mod tests {
     /// directly to ProPhoto (so `camToProPhoto = I`), no tables, no curve.
     /// `as_shot_neutral = [1,1,1]`. Used for the identity test.
     fn identity_profile() -> DcpProfile {
-        let xyz_to_prophoto_inv = mat3_from_row_major(&PROPHOTO_TO_XYZ_D50);
+        // ProPhoto→XYZ = inverse of XYZ→ProPhoto, computed in f64 for precision,
+        // downcast to f32 (Mat3) for the DcpProfile field.
+        let xyz_to_prophoto_f64 = mat3_from_row_major_f64(&XYZ_TO_PROPHOTO_D50);
+        let prophoto_to_xyz_f32 = xyz_to_prophoto_f64.try_inverse().unwrap().cast::<f32>();
         DcpProfile {
             id: ProfileId([0u8; 32]),
             file_path: PathBuf::new(),
@@ -773,8 +1009,8 @@ mod tests {
             calibration_illuminant_2: Some(Illuminant::D65),
             color_matrix_1: ident_mat(),
             color_matrix_2: Some(ident_mat()),
-            forward_matrix_1: Some(xyz_to_prophoto_inv),
-            forward_matrix_2: Some(xyz_to_prophoto_inv),
+            forward_matrix_1: Some(prophoto_to_xyz_f32),
+            forward_matrix_2: Some(prophoto_to_xyz_f32),
             camera_calibration_1: None,
             camera_calibration_2: None,
             analog_balance: None,
@@ -790,16 +1026,19 @@ mod tests {
 
     #[test]
     fn colour_matrices_round_trip() {
-        // XYZ→ProPhoto and ProPhoto→XYZ must be inverses.
-        let a = mat3_from_row_major(&XYZ_TO_PROPHOTO_D50);
-        let b = mat3_from_row_major(&PROPHOTO_TO_XYZ_D50);
-        let prod = (a * b).cast::<f64>();
+        // XYZ→ProPhoto, when inverted in f64 (as new() does at runtime), must
+        // give identity. The f32 published constants are approximations whose
+        // direct product differs from I by ~1e-4; the runtime computes the
+        // inverse in f64 to avoid that error propagating.
+        let a = mat3_from_row_major_f64(&XYZ_TO_PROPHOTO_D50);
+        let b = a.try_inverse().unwrap();
+        let prod = a * b;
         for i in 0..3 {
             for j in 0..3 {
                 let want = if i == j { 1.0 } else { 0.0 };
                 assert!(
-                    (prod[(i, j)] - want).abs() < 1e-6,
-                    "XYZ↔ProPhoto not inverse at ({i},{j}): {}",
+                    (prod[(i, j)] - want).abs() < 1e-12,
+                    "XYZ↔ProPhoto f64 inverse not identity at ({i},{j}): {}",
                     prod[(i, j)]
                 );
             }
@@ -846,20 +1085,21 @@ mod tests {
     #[test]
     fn identity_profile_is_linear_transform() {
         // Even with pure FM = I (not camera≡ProPhoto), an identity profile with
-        // no tables/curve must be a pure linear transform: render ==
-        // xyz_to_prophoto * input (the DCP chain adds nothing nonlinear).
+        // no tables/curve must be a pure linear transform. After
+        // NormalizeForwardMatrix, the raw identity FM is corrected to map
+        // [1,1,1] → D50, so the effective linear transform is
+        // xyz_to_prophoto * normalize_forward_matrix(I), not xyz_to_prophoto.
         let mut prof = identity_profile();
         prof.forward_matrix_1 = Some(ident_mat());
         prof.forward_matrix_2 = Some(ident_mat());
         let r = DcpRenderer::new(&prof, [1.0, 1.0, 1.0]).expect("renderer");
-        let xyz_to_prophoto = mat3_from_row_major(&XYZ_TO_PROPHOTO_D50);
-        for input in [
-            [0.1f32, 0.2, 0.3],
-            [0.4, 0.4, 0.4],
-            [1.2, 0.8, 0.6],
-        ] {
+        let xyz_to_prophoto = mat3_from_row_major_f64(&XYZ_TO_PROPHOTO_D50);
+        let norm_fm = normalize_forward_matrix(&nalgebra::Matrix3::<f64>::identity());
+        let expected_f64 = xyz_to_prophoto * norm_fm;
+        let expected = expected_f64.cast::<f32>();
+        for input in [[0.1f32, 0.2, 0.3], [0.4, 0.4, 0.4], [1.2, 0.8, 0.6]] {
             let out = r.render_pixel(input);
-            let v = xyz_to_prophoto * nalgebra::Vector3::new(input[0], input[1], input[2]);
+            let v = expected * nalgebra::Vector3::new(input[0], input[1], input[2]);
             for i in 0..3 {
                 assert!(
                     (out[i] - v[i]).abs() < 1e-5,
@@ -894,10 +1134,14 @@ mod tests {
         // The neutral-axis test with a real (non-identity) forward matrix still
         // maps the camera neutral to the D50 white point.
         let mut prof = identity_profile();
-        // A plausible FM that maps camera->XYZ(D50); verify the neutral renders
-        // neutral regardless of the specific matrix.
-        prof.forward_matrix_1 = Some(mat3_from_row_major(&XYZ_TO_PROPHOTO_D50)); // camera==ProPhoto
-        prof.forward_matrix_2 = Some(mat3_from_row_major(&XYZ_TO_PROPHOTO_D50));
+        // camera == ProPhoto: FM must map camera RGB -> XYZ(D50), which is
+        // ProPhoto -> XYZ(D50) = inverse of XYZ_TO_PROPHOTO_D50, computed in f64.
+        let prophoto_to_xyz_f32 = mat3_from_row_major_f64(&XYZ_TO_PROPHOTO_D50)
+            .try_inverse()
+            .unwrap()
+            .cast::<f32>();
+        prof.forward_matrix_1 = Some(prophoto_to_xyz_f32);
+        prof.forward_matrix_2 = Some(prophoto_to_xyz_f32);
         let as_shot_neutral = [0.5f32, 1.0, 0.8];
         let r = DcpRenderer::new(&prof, as_shot_neutral).expect("renderer");
         let out = r.render_pixel(as_shot_neutral);
@@ -905,6 +1149,34 @@ mod tests {
             (out[0] - out[1]).abs() < 1e-4 && (out[1] - out[2]).abs() < 1e-4,
             "neutral-axis (real matrices): {as_shot_neutral:?} -> {out:?}"
         );
+    }
+
+    #[test]
+    fn forward_matrices_normalize_to_d50() {
+        // A ForwardMatrix whose rows don't sum to canonical D50 must normalise
+        // to one that does. Use a synthetic FM whose row sums are off by ~1e-4
+        // (like the real Cobalt FM1). After normalisation, mapping [1,1,1]
+        // through the matrix must yield D50 XYZ at machine precision.
+        let fm_raw = nalgebra::Matrix3::new(
+            0.5852, 0.2478, 0.1314, // row sum ~0.9644 (canonical: 0.964296)
+            0.2148, 0.7488, 0.0364, // row sum  1.0000
+            0.0075, 0.0195, 0.7981, // row sum ~0.8251 (canonical: 0.825105)
+        );
+        let n = normalize_forward_matrix(&fm_raw);
+        let w = n * nalgebra::Vector3::new(1.0, 1.0, 1.0);
+        let d50_xyz = nalgebra::Vector3::new(
+            D50_XY.0 / D50_XY.1,
+            1.0,
+            (1.0 - D50_XY.0 - D50_XY.1) / D50_XY.1,
+        );
+        for i in 0..3 {
+            assert!(
+                (w[i] - d50_xyz[i]).abs() < 1e-12,
+                "normalised FM row {i} = {}, D50 = {}",
+                w[i],
+                d50_xyz[i]
+            );
+        }
     }
 
     #[test]
@@ -920,7 +1192,10 @@ mod tests {
             let hsv = rgb_to_hsv(c);
             let back = hsv_to_rgb(hsv);
             for i in 0..3 {
-                assert!((back[i] - c[i]).abs() < 1e-4, "hsv round trip {c:?} -> {back:?}");
+                assert!(
+                    (back[i] - c[i]).abs() < 1e-4,
+                    "hsv round trip {c:?} -> {back:?}"
+                );
             }
         }
     }
@@ -942,29 +1217,36 @@ mod tests {
         // Negative values must survive the round trip (sign-symmetric).
         let neg = linear_to_srgb_transfer(-0.5);
         let pos = linear_to_srgb_transfer(0.5);
-        assert!((neg + pos).abs() < 1e-6, "not sign-symmetric: {neg} vs {pos}");
+        assert!(
+            (neg + pos).abs() < 1e-6,
+            "not sign-symmetric: {neg} vs {pos}"
+        );
     }
 
     /// Build a 2x2x1 identity HueSatMap table (all [0,1,1]).
     fn identity_hsv_table() -> HsvTable {
         let mut data = Vec::new();
-        for _ in 0..(2 * 2 * 1) {
+        for _ in 0..(2 * 2) {
             data.push([0.0, 1.0, 1.0]);
         }
-        HsvTable { hue_div: 2, sat_div: 2, val_div: 1, data }
+        HsvTable {
+            hue_div: 2,
+            sat_div: 2,
+            val_div: 1,
+            data,
+        }
     }
 
     #[test]
     fn hsv_identity_table_noop() {
         let table = identity_hsv_table();
-        for c in [
-            [0.1f32, 0.2, 0.3],
-            [0.8, 0.2, 0.9],
-            [1.0, 0.0, 0.0],
-        ] {
+        for c in [[0.1f32, 0.2, 0.3], [0.8, 0.2, 0.9], [1.0, 0.0, 0.0]] {
             let out = apply_hsv_table(c, &table, TableEncoding::Linear);
             for i in 0..3 {
-                assert!((out[i] - c[i]).abs() < 1e-5, "identity table {c:?} -> {out:?}");
+                assert!(
+                    (out[i] - c[i]).abs() < 1e-5,
+                    "identity table {c:?} -> {out:?}"
+                );
             }
         }
     }
@@ -976,7 +1258,12 @@ mod tests {
         // Build a 90x1x1 table: hueShift = 10 at hue index 89, 0 elsewhere.
         let mut data = vec![[0.0f32, 1.0, 1.0]; 90];
         data[89] = [10.0, 1.0, 1.0];
-        let table = HsvTable { hue_div: 90, sat_div: 1, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 90,
+            sat_div: 1,
+            val_div: 1,
+            data,
+        };
 
         // A hue just below the wrap (e.g. hue 359 -> index ~89) gets the shift.
         // Find an RGB whose hue is ~359.9 (red-ish, just below red boundary).
@@ -1005,7 +1292,12 @@ mod tests {
         // Build a 2x2x1 table where satScale is huge (10x) and valScale 2x.
         let mut data = vec![[0.0f32, 1.0, 1.0]; 4];
         data[0] = [0.0, 10.0, 2.0]; // hue0,sat0
-        let table = HsvTable { hue_div: 2, sat_div: 2, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 2,
+            sat_div: 2,
+            val_div: 1,
+            data,
+        };
 
         // A low-sat colour at hue 0: sat gets scaled but clamps at 1.
         let rgb = [0.2f32, 0.19, 0.18]; // near-neutral, hue ~0-ish region
@@ -1029,7 +1321,9 @@ mod tests {
     #[test]
     fn tone_curve_lut_interpolation() {
         // A linear curve y = x should reproduce the identity via the LUT.
-        let points: Vec<[f32; 2]> = (0..=100).map(|i| [i as f32 / 100.0, i as f32 / 100.0]).collect();
+        let points: Vec<[f32; 2]> = (0..=100)
+            .map(|i| [i as f32 / 100.0, i as f32 / 100.0])
+            .collect();
         let lut = resample_tone_curve(&points);
         assert_eq!(lut.len(), TONE_CURVE_LUT_SIZE);
         for &x in &[0.0f32, 0.1, 0.5, 0.999, 1.0] {
@@ -1073,8 +1367,14 @@ mod tests {
 
     #[test]
     fn baseline_exposure_gain() {
-        assert_eq!(apply_baseline_exposure([0.5, 0.5, 0.5], 1.0), [1.0, 1.0, 1.0]);
-        assert_eq!(apply_baseline_exposure([0.5, 0.5, 0.5], 0.0), [0.5, 0.5, 0.5]);
+        assert_eq!(
+            apply_baseline_exposure([0.5, 0.5, 0.5], 1.0),
+            [1.0, 1.0, 1.0]
+        );
+        assert_eq!(
+            apply_baseline_exposure([0.5, 0.5, 0.5], 0.0),
+            [0.5, 0.5, 0.5]
+        );
     }
 
     #[test]
