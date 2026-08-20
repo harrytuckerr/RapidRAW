@@ -1119,7 +1119,8 @@
       "typeStyleDesc": "Applies the complete look. This will override all your current settings to match the preset exactly.",
       "typeStyleLabel": "Style",
       "typeToolDesc": "Only applies specific changes without touching your other settings.",
-      "typeToolLabel": "Tool"
+      "typeToolLabel": "Tool",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "Cancel",
@@ -1927,5 +1928,23 @@
         "vectorscope": "Vectorscope"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

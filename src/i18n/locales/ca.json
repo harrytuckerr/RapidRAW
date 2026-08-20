@@ -1119,7 +1119,8 @@
       "typeStyleDesc": "Aplica l'aspecte complet. Això sobreescriurà tota la vostra configuració actual perquè coincideixi exactament amb l'ajust preestablert.",
       "typeStyleLabel": "Estil",
       "typeToolDesc": "Només aplica canvis específics sense tocar la resta de la vostra configuració.",
-      "typeToolLabel": "Eina"
+      "typeToolLabel": "Eina",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "Cancel·lar",
@@ -1927,5 +1928,23 @@
         "vectorscope": "Vectorscopi"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

@@ -1167,7 +1167,8 @@
       "typeStyleDesc": "Zastosowuje kompletny wygląd. Nadpisze wszystkie twoje obecne ustawienia, aby idealnie dopasować się do presetu.",
       "typeStyleLabel": "Styl",
       "typeToolDesc": "Stosuje tylko wybrane zmiany bez dotykania reszty twoich ustawień.",
-      "typeToolLabel": "Narzędzie"
+      "typeToolLabel": "Narzędzie",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "Anuluj",
@@ -1997,5 +1998,23 @@
         "vectorscope": "Wektroskop"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

@@ -69,6 +69,7 @@ export function usePresets(currentAdjustments: Adjustments) {
     includeMasks: boolean = false,
     includeCropTransform: boolean = false,
     presetType: 'tool' | 'style' = 'style',
+    includeProfile: boolean = false,
   ) => {
     const GEOMETRY_KEYS = ADJUSTMENT_GROUPS.geometry.flatMap((group) => group.keys);
     const MASK_KEYS = ADJUSTMENT_GROUPS.masks.flatMap((group) => group.keys);
@@ -93,12 +94,18 @@ export function usePresets(currentAdjustments: Adjustments) {
       }
     }
 
+    // Profile is captured separately — opt-in per §5.3
+    if (includeProfile && Object.prototype.hasOwnProperty.call(currentAdjustments, 'profile')) {
+      presetAdjustments['profile'] = currentAdjustments['profile'];
+    }
+
     const newPresetData: Preset = {
       adjustments: presetAdjustments,
       id: crypto.randomUUID(),
       name,
       includeMasks,
       includeCropTransform,
+      includeProfile,
       presetType,
     };
 
@@ -193,6 +200,7 @@ export function usePresets(currentAdjustments: Adjustments) {
     includeMasks: boolean,
     includeCropTransform: boolean,
     presetType: 'tool' | 'style',
+    includeProfile: boolean = false,
   ) => {
     let existingPreset: Preset | null = null;
 
@@ -242,6 +250,10 @@ export function usePresets(currentAdjustments: Adjustments) {
     if (!includeCropTransform) {
       for (const k of GEOMETRY_KEYS) delete newAdjustments[k];
     }
+    // Profile is opt-in per §5.3; remove if not explicitly included
+    if (!includeProfile) {
+      delete newAdjustments['profile'];
+    }
 
     let updatedPreset: Preset | null = null;
     const updatedPresets = presets.map((item: UserPreset) => {
@@ -252,6 +264,7 @@ export function usePresets(currentAdjustments: Adjustments) {
           adjustments: newAdjustments,
           includeMasks,
           includeCropTransform,
+          includeProfile,
           presetType,
         };
         return { preset: updatedPreset };
@@ -267,6 +280,7 @@ export function usePresets(currentAdjustments: Adjustments) {
               adjustments: newAdjustments,
               includeMasks,
               includeCropTransform,
+              includeProfile,
               presetType,
             };
             return updatedPreset;
