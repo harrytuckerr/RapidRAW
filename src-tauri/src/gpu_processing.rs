@@ -535,6 +535,8 @@ pub struct GpuProcessor {
     dummy_blur_view: wgpu::TextureView,
     dummy_lut_view: wgpu::TextureView,
     dummy_lut_sampler: wgpu::Sampler,
+    dcp_dummy_3d_view: wgpu::TextureView,
+    dcp_dummy_tc_view: wgpu::TextureView,
     ping_pong_view: wgpu::TextureView,
     sharpness_blur_view: wgpu::TextureView,
     tonal_blur_view: wgpu::TextureView,
@@ -554,6 +556,7 @@ const FLARE_MAP_SIZE: u32 = 512;
 impl GpuProcessor {
     pub fn new(context: GpuContext, max_width: u32, max_height: u32) -> Result<Self, String> {
         let device = &context.device;
+        let queue = &context.queue;
         const MAX_MASK_BINDINGS: u32 = 1;
 
         let blur_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -896,6 +899,38 @@ impl GpuProcessor {
             count: None,
         });
 
+        // DCP profile textures (W3) — bindings 12-14
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 12,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D3,
+                multisampled: false,
+            },
+            count: None,
+        });
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 13,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D3,
+                multisampled: false,
+            },
+            count: None,
+        });
+        bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 14,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D1,
+                multisampled: false,
+            },
+            count: None,
+        });
+
         let main_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Main BGL"),
             entries: &bind_group_layout_entries,
@@ -946,6 +981,38 @@ impl GpuProcessor {
         });
         let dummy_lut_view = dummy_lut_texture.create_view(&Default::default());
         let dummy_lut_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+
+        // DCP dummy textures (W3) — bound when no profile is active.
+        // The shader early-outs (has_dcp == 0) so their content is never sampled.
+        let dcp_dummy_3d = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("DCP Dummy 3D"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let dcp_dummy_3d_view = dcp_dummy_3d.create_view(&Default::default());
+        // Identity tone curve LUT (4096 entries, y=x).
+        let tc_data: Vec<f32> = (0..4096u32).map(|i| i as f32 / 4095.0).collect();
+        let dcp_dummy_tc = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("DCP Dummy Tone Curve"),
+                size: wgpu::Extent3d { width: 4096, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D1,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            TextureDataOrder::MipMajor,
+            bytemuck::cast_slice(&tc_data),
+        );
+        let dcp_dummy_tc_view = dcp_dummy_tc.create_view(&Default::default());
 
         const TILE_SIZE: u32 = 2048;
         const TILE_OVERLAP: u32 = 128;
@@ -1071,6 +1138,8 @@ impl GpuProcessor {
             dummy_blur_view,
             dummy_lut_view,
             dummy_lut_sampler,
+            dcp_dummy_3d_view,
+            dcp_dummy_tc_view,
             ping_pong_view,
             sharpness_blur_view,
             tonal_blur_view,
@@ -1501,6 +1570,20 @@ impl GpuProcessor {
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 10 + MAX_MASK_BINDINGS,
                     resource: wgpu::BindingResource::Sampler(&self.flare_sampler),
+                });
+
+                // DCP profile textures (W3) — dummy when no profile active.
+                bind_group_entries.push(wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_3d_view),
+                });
+                bind_group_entries.push(wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_3d_view),
+                });
+                bind_group_entries.push(wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_tc_view),
                 });
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
