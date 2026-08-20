@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 // Re-export the delta-E and statistics machinery for use by the CLI harness.
 pub use crate::dcp::delta_e::{
-    check_gpu_parity, check_thresholds, compute_stats, prophoto_delta_e, DeltaEStats,
+    DeltaEStats, check_gpu_parity, check_thresholds, compute_stats, prophoto_delta_e,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,9 +110,15 @@ fn dual_illuminant_profile() -> DcpProfile {
         1.211_967_545_638_945_2,
     ];
     let xyz_to_prophoto_mat = nalgebra::Matrix3::new(
-        xyz_to_prophoto[0], xyz_to_prophoto[1], xyz_to_prophoto[2],
-        xyz_to_prophoto[3], xyz_to_prophoto[4], xyz_to_prophoto[5],
-        xyz_to_prophoto[6], xyz_to_prophoto[7], xyz_to_prophoto[8],
+        xyz_to_prophoto[0],
+        xyz_to_prophoto[1],
+        xyz_to_prophoto[2],
+        xyz_to_prophoto[3],
+        xyz_to_prophoto[4],
+        xyz_to_prophoto[5],
+        xyz_to_prophoto[6],
+        xyz_to_prophoto[7],
+        xyz_to_prophoto[8],
     );
     let fm_f64 = xyz_to_prophoto_mat.try_inverse().unwrap();
     let fm = fm_f64.cast::<f32>();
@@ -263,7 +269,10 @@ mod tests {
             let expected = r.render_pixel([chunk[0], chunk[1], chunk[2]]);
             let got = &slice[i * 3..i * 3 + 3];
             let de = prophoto_delta_e(expected, [got[0], got[1], got[2]], &XYZ_TO_PROPHOTO_D50);
-            assert!(de < 1e-6, "slice pixel {i}: scalar {expected:?} vs slice {got:?}, dE {de}");
+            assert!(
+                de < 1e-6,
+                "slice pixel {i}: scalar {expected:?} vs slice {got:?}, dE {de}"
+            );
         }
     }
 
@@ -275,10 +284,18 @@ mod tests {
     fn hsv_hue_index_89_0_wrap() {
         let mut data = vec![[0.0f32, 1.0, 1.0]; 90];
         data[89] = [10.0, 1.0, 1.0];
-        let table = HsvTable { hue_div: 90, sat_div: 1, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 90,
+            sat_div: 1,
+            val_div: 1,
+            data,
+        };
 
         let mut prof = super::dual_illuminant_profile();
-        prof.hue_sat_map = Some(DualHueSatMap { map_1: table, map_2: None });
+        prof.hue_sat_map = Some(DualHueSatMap {
+            map_1: table,
+            map_2: None,
+        });
 
         let r = DcpRenderer::new(&prof, [1.0, 1.0, 1.0]).expect("renderer");
 
@@ -299,17 +316,28 @@ mod tests {
     fn hsv_saturation_clamps_at_1() {
         let mut data = vec![[0.0f32, 1.0, 1.0]; 4];
         data[0] = [0.0, 10.0, 1.0];
-        let table = HsvTable { hue_div: 2, sat_div: 2, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 2,
+            sat_div: 2,
+            val_div: 1,
+            data,
+        };
 
         let mut prof = super::dual_illuminant_profile();
-        prof.hue_sat_map = Some(DualHueSatMap { map_1: table, map_2: None });
+        prof.hue_sat_map = Some(DualHueSatMap {
+            map_1: table,
+            map_2: None,
+        });
 
         let r = DcpRenderer::new(&prof, [1.0, 1.0, 1.0]).expect("renderer");
 
         let rgb = [0.2f32, 0.19, 0.18];
         let out = r.render_pixel(rgb);
         let sat_out = rgb_to_hsv(out)[1];
-        assert!(sat_out <= 1.0 + 1e-5, "saturation clamps at 1: got {sat_out}");
+        assert!(
+            sat_out <= 1.0 + 1e-5,
+            "saturation clamps at 1: got {sat_out}"
+        );
     }
 
     /// Value does NOT clamp: a table with valScale=2 must double the value.
@@ -317,10 +345,18 @@ mod tests {
     fn hsv_value_does_not_clamp() {
         let mut data = vec![[0.0f32, 1.0, 1.0]; 4];
         data[0] = [0.0, 1.0, 2.0];
-        let table = HsvTable { hue_div: 2, sat_div: 2, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 2,
+            sat_div: 2,
+            val_div: 1,
+            data,
+        };
 
         let mut prof = super::dual_illuminant_profile();
-        prof.hue_sat_map = Some(DualHueSatMap { map_1: table, map_2: None });
+        prof.hue_sat_map = Some(DualHueSatMap {
+            map_1: table,
+            map_2: None,
+        });
 
         let r = DcpRenderer::new(&prof, [1.0, 1.0, 1.0]).expect("renderer");
 
@@ -333,7 +369,8 @@ mod tests {
         assert!(
             (hsv_out[2] - expected_val).abs() < 0.1,
             "value NOT clamped: input val {}, output val {} (expected ~{expected_val})",
-            hsv_in[2], hsv_out[2]
+            hsv_in[2],
+            hsv_out[2]
         );
     }
 
@@ -392,10 +429,18 @@ mod tests {
         for i in 0..30 {
             data[i * 2] = [1.0, 1.0, 1.0];
         }
-        let table = HsvTable { hue_div: 90, sat_div: 2, val_div: 1, data };
+        let table = HsvTable {
+            hue_div: 90,
+            sat_div: 2,
+            val_div: 1,
+            data,
+        };
 
         let mut prof = super::dual_illuminant_profile();
-        prof.hue_sat_map = Some(DualHueSatMap { map_1: table, map_2: None });
+        prof.hue_sat_map = Some(DualHueSatMap {
+            map_1: table,
+            map_2: None,
+        });
 
         let r = DcpRenderer::new(&prof, [1.0, 1.0, 1.0]).expect("renderer");
         let out = r.render_pixel([0.5, 0.3, 0.2]);
@@ -487,10 +532,14 @@ mod tests {
         let mut test_rgb: Vec<f32> = Vec::with_capacity((n_pixels * 3) as usize);
         let mut state = seed;
         for _ in 0..n_pixels {
-            state ^= state >> 12; state ^= state << 25; state ^= state >> 27;
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
             let r = (state as f32 / u64::MAX as f32) * 2.0;
             let next = state;
-            state ^= state >> 12; state ^= state << 25; state ^= state >> 27;
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
             let g = (state as f32 / u64::MAX as f32) * 2.0;
             state = next.wrapping_mul(0x2545_f491_4f6c_dd1d);
             let b = (state as f32 / u64::MAX as f32) * 2.0;
@@ -502,44 +551,66 @@ mod tests {
         cpu.render_slice(&mut cpu_rgb);
         for chunk in cpu_rgb.chunks_mut(3) {
             let ws = cpu.to_working_space([chunk[0], chunk[1], chunk[2]]);
-            chunk[0] = ws[0]; chunk[1] = ws[1]; chunk[2] = ws[2];
+            chunk[0] = ws[0];
+            chunk[1] = ws[1];
+            chunk[2] = ws[2];
         }
 
         // ---- 4. GPU render (headless wgpu compute) --------------------------
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
-        );
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions::default(),
-        )) {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = match pollster::block_on(
+            instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+        ) {
             Ok(a) => a,
-            Err(e) => { eprintln!("GPU parity: no adapter ({e}) — skipping"); return; }
+            Err(e) => {
+                eprintln!("GPU parity: no adapter ({e}) — skipping");
+                return;
+            }
         };
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor::default(),
-        )) {
-            Ok(dq) => dq,
-            Err(e) => { eprintln!("GPU parity: device error {e} — skipping"); return; }
-        };
+        let (device, queue) =
+            match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())) {
+                Ok(dq) => dq,
+                Err(e) => {
+                    eprintln!("GPU parity: device error {e} — skipping");
+                    return;
+                }
+            };
 
         // Input texture (rgba16float, 512x512).
-        let tex_size = wgpu::Extent3d { width: 512, height: 512, depth_or_array_layers: 1 };
+        let tex_size = wgpu::Extent3d {
+            width: 512,
+            height: 512,
+            depth_or_array_layers: 1,
+        };
         let mut rgba: Vec<f32> = Vec::with_capacity((n_pixels * 4) as usize);
-        for c in test_rgb.chunks(3) { rgba.extend_from_slice(&[c[0], c[1], c[2], 1.0]); }
+        for c in test_rgb.chunks(3) {
+            rgba.extend_from_slice(&[c[0], c[1], c[2], 1.0]);
+        }
         let in_tex = device.create_texture_with_data(
             &queue,
-            &wgpu::TextureDescriptor { label: Some("p-in"), size: tex_size,
-                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            &wgpu::TextureDescriptor {
+                label: Some("p-in"),
+                size: tex_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[] },
-            wgpu::util::TextureDataOrder::MipMajor, bytemuck::cast_slice(&rgba),
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            bytemuck::cast_slice(&rgba),
         );
         let in_view = in_tex.create_view(&Default::default());
 
         let out_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("p-out"), size: tex_size, mip_level_count: 1, sample_count: 1,
-            dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm,
+            label: Some("p-out"),
+            size: tex_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -547,21 +618,34 @@ mod tests {
 
         // Uniforms: DCP matrices from CPU renderer, identity tables/curve.
         let u = DcpParityUniforms {
-            is_raw_image: 1, has_dcp: 1, _pad_a: 0, _pad_b: 0,
-            dcp_huesat_dims: [0; 4], dcp_look_dims: [0; 4],
+            is_raw_image: 1,
+            has_dcp: 1,
+            _pad_a: 0,
+            _pad_b: 0,
+            dcp_huesat_dims: [0; 4],
+            dcp_look_dims: [0; 4],
             cam_to_prophoto: mat3_to_cols(cpu.cam_to_prophoto()),
             prophoto_to_working: mat3_to_cols(cpu.prophoto_to_working()),
         };
         let u_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("p-u"), contents: bytemuck::bytes_of(&u),
+            label: Some("p-u"),
+            contents: bytemuck::bytes_of(&u),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         // Dummy 3D texture (1x1x1, rgba16float).
         let d3 = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("p-3d"), size: wgpu::Extent3d { width:1, height:1, depth_or_array_layers:1 },
-            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba16Float, usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            label: Some("p-3d"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let d3v = d3.create_view(&Default::default());
@@ -570,86 +654,192 @@ mod tests {
         let tc_data: Vec<f32> = (0..4096u32).map(|i| i as f32 / 4095.0).collect();
         let tc_tex = device.create_texture_with_data(
             &queue,
-            &wgpu::TextureDescriptor { label: Some("p-tc"),
-                size: wgpu::Extent3d { width: 4096, height: 1, depth_or_array_layers: 1 },
-                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D1,
+            &wgpu::TextureDescriptor {
+                label: Some("p-tc"),
+                size: wgpu::Extent3d {
+                    width: 4096,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D1,
                 format: wgpu::TextureFormat::R32Float,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[] },
-            wgpu::util::TextureDataOrder::MipMajor, bytemuck::cast_slice(&tc_data),
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            bytemuck::cast_slice(&tc_data),
         );
         let tc_v = tc_tex.create_view(&Default::default());
 
         // Compile the minimal DCP-only shader.
         let sm = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("p-sm"), source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/dcp_parity.wgsl").into()),
+            label: Some("p-sm"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/dcp_parity.wgsl").into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("p-bgl"),
             entries: &[
-                wgpu::BindGroupLayoutEntry { binding:0, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Float{filterable:false},view_dimension:wgpu::TextureViewDimension::D2,multisampled:false}, count:None },
-                wgpu::BindGroupLayoutEntry { binding:1, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::StorageTexture{access:wgpu::StorageTextureAccess::WriteOnly,format:wgpu::TextureFormat::Rgba8Unorm,view_dimension:wgpu::TextureViewDimension::D2}, count:None },
-                wgpu::BindGroupLayoutEntry { binding:2, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::Buffer{ty:wgpu::BufferBindingType::Storage{read_only:true},has_dynamic_offset:false,min_binding_size:None}, count:None },
-                wgpu::BindGroupLayoutEntry { binding:3, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Float{filterable:false},view_dimension:wgpu::TextureViewDimension::D3,multisampled:false}, count:None },
-                wgpu::BindGroupLayoutEntry { binding:4, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Float{filterable:false},view_dimension:wgpu::TextureViewDimension::D3,multisampled:false}, count:None },
-                wgpu::BindGroupLayoutEntry { binding:5, visibility:wgpu::ShaderStages::COMPUTE,
-                    ty:wgpu::BindingType::Texture{sample_type:wgpu::TextureSampleType::Float{filterable:false},view_dimension:wgpu::TextureViewDimension::D1,multisampled:false}, count:None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D1,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None, bind_group_layouts: &[Some(&bgl)], immediate_size: 0,
+            label: None,
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
         let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("p-pipe"), layout: Some(&pl), module: &sm, entry_point: Some("main"),
-            compilation_options: Default::default(), cache: None,
+            label: Some("p-pipe"),
+            layout: Some(&pl),
+            module: &sm,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("p-bg"), layout: &bgl,
+            label: Some("p-bg"),
+            layout: &bgl,
             entries: &[
-                wgpu::BindGroupEntry{binding:0,resource:wgpu::BindingResource::TextureView(&in_view)},
-                wgpu::BindGroupEntry{binding:1,resource:wgpu::BindingResource::TextureView(&out_view)},
-                wgpu::BindGroupEntry{binding:2,resource:u_buf.as_entire_binding()},
-                wgpu::BindGroupEntry{binding:3,resource:wgpu::BindingResource::TextureView(&d3v)},
-                wgpu::BindGroupEntry{binding:4,resource:wgpu::BindingResource::TextureView(&d3v)},
-                wgpu::BindGroupEntry{binding:5,resource:wgpu::BindingResource::TextureView(&tc_v)},
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: u_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&d3v),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&d3v),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&tc_v),
+                },
             ],
         });
 
         let mut enc = device.create_command_encoder(&Default::default());
-        { let mut cp = enc.begin_compute_pass(&Default::default());
-          cp.set_pipeline(&pipe); cp.set_bind_group(0, &bg, &[]);
-          cp.dispatch_workgroups(64, 64, 1); }
+        {
+            let mut cp = enc.begin_compute_pass(&Default::default());
+            cp.set_pipeline(&pipe);
+            cp.set_bind_group(0, &bg, &[]);
+            cp.dispatch_workgroups(64, 64, 1);
+        }
         queue.submit(Some(enc.finish()));
 
         // Readback.
         let al = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let pbpr = ((512 * 4) + al - 1) & !(al - 1);
         let rb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("p-rb"), size: (pbpr * 512) as u64,
+            label: Some("p-rb"),
+            size: (pbpr * 512) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
         let mut e2 = device.create_command_encoder(&Default::default());
         e2.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo{texture:&out_tex,mip_level:0,origin:wgpu::Origin3d::ZERO,aspect:wgpu::TextureAspect::All},
-            wgpu::TexelCopyBufferInfo{buffer:&rb,layout:wgpu::TexelCopyBufferLayout{offset:0,bytes_per_row:Some(pbpr),rows_per_image:Some(512)}},
+            wgpu::TexelCopyTextureInfo {
+                texture: &out_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &rb,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(pbpr),
+                    rows_per_image: Some(512),
+                },
+            },
             tex_size,
         );
         queue.submit(Some(e2.finish()));
         let (tx, rx) = std::sync::mpsc::channel();
         let sl = rb.slice(..);
-        sl.map_async(wgpu::MapMode::Read, move |r| { let _=tx.send(r); });
-        device.poll(wgpu::PollType::Wait{submission_index:None,timeout:None}).unwrap();
+        sl.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            })
+            .unwrap();
         rx.recv().unwrap().unwrap();
         let data = sl.get_mapped_range().to_vec();
-        drop(sl); rb.unmap();
+        drop(sl);
+        rb.unmap();
 
         // ---- 5. Compare ----------------------------------------------------
         let mut max_diff: f32 = 0.0;
@@ -658,20 +848,30 @@ mod tests {
             let so = row * pbpr as usize;
             for col in 0..512 {
                 let pi = (row * 512 + col) * 3;
-                let gr = (data[so + col*4 + 0] as f32) / 255.0;
-                let gg = (data[so + col*4 + 1] as f32) / 255.0;
-                let gb = (data[so + col*4 + 2] as f32) / 255.0;
-                let d = (gr - cpu_rgb[pi]).abs()
-                    .max((gg - cpu_rgb[pi+1]).abs())
-                    .max((gb - cpu_rgb[pi+2]).abs());
+                let gr = (data[so + col * 4 + 0] as f32) / 255.0;
+                let gg = (data[so + col * 4 + 1] as f32) / 255.0;
+                let gb = (data[so + col * 4 + 2] as f32) / 255.0;
+                let d = (gr - cpu_rgb[pi])
+                    .abs()
+                    .max((gg - cpu_rgb[pi + 1]).abs())
+                    .max((gb - cpu_rgb[pi + 2]).abs());
                 max_diff = max_diff.max(d);
                 sum += d as f64;
             }
         }
         let mean_diff = sum / (n_pixels as f64);
-        eprintln!("GPU parity: {} px — max {:.6}, mean {:.6}", n_pixels, max_diff, mean_diff);
-        assert!(max_diff < 1e-3, "max per-channel diff {max_diff:.6} >= 1e-3");
-        assert!(mean_diff < 1e-4, "mean per-channel diff {mean_diff:.6} >= 1e-4");
+        eprintln!(
+            "GPU parity: {} px — max {:.6}, mean {:.6}",
+            n_pixels, max_diff, mean_diff
+        );
+        assert!(
+            max_diff < 1e-3,
+            "max per-channel diff {max_diff:.6} >= 1e-3"
+        );
+        assert!(
+            mean_diff < 1e-4,
+            "mean per-channel diff {mean_diff:.6} >= 1e-4"
+        );
         eprintln!("GPU parity: PASSED");
     }
 
@@ -731,7 +931,10 @@ mod tests {
                 }
             };
 
-            eprintln!("  {stem}: reference {ref_path:?} loaded ({}px)", ref_img.len() / 3);
+            eprintln!(
+                "  {stem}: reference {ref_path:?} loaded ({}px)",
+                ref_img.len() / 3
+            );
             _total_pixels += ref_img.len() / 3;
         }
 
@@ -743,8 +946,13 @@ mod tests {
         let stats = compute_stats(&_all_de, &_all_shadows, &_all_highlights);
         eprintln!(
             "ACR comparison: {} pixels, mean={:.4}, p95={:.4}, max={:.4} ({} excluded: {} shadow, {} highlight)",
-            stats.count, stats.mean, stats.p95, stats.max,
-            stats.excluded, stats.deep_shadows_excluded, stats.clipped_highlights_excluded
+            stats.count,
+            stats.mean,
+            stats.p95,
+            stats.max,
+            stats.excluded,
+            stats.deep_shadows_excluded,
+            stats.clipped_highlights_excluded
         );
 
         if !check_thresholds(&stats) {

@@ -93,7 +93,10 @@ fn cmd_render(args: &[String]) {
         }
     };
     let profile = &profiles[0];
-    eprintln!("Loaded DCP: {} ({})", profile.profile_name, profile.unique_camera_model);
+    eprintln!(
+        "Loaded DCP: {} ({})",
+        profile.profile_name, profile.unique_camera_model
+    );
 
     // Build a renderer with a nominal daylight neutral.
     let as_shot_neutral = [0.5f32, 1.0, 0.8];
@@ -118,7 +121,11 @@ fn cmd_render(args: &[String]) {
         .map(|p| renderer.to_working_space(*p))
         .collect();
 
-    eprintln!("Rendered {} test pixels through '{}'", swatch.len(), profile.profile_name);
+    eprintln!(
+        "Rendered {} test pixels through '{}'",
+        swatch.len(),
+        profile.profile_name
+    );
 
     // If --output is specified, write a TIFF.
     if let Some(out_path) = parse_flag(args, "--output") {
@@ -128,9 +135,7 @@ fn cmd_render(args: &[String]) {
         eprintln!("No --output specified; rendering complete (no file written).");
         // Print first few values.
         for (i, (in_px, out_px)) in swatch.iter().zip(working.iter()).take(5).enumerate() {
-            eprintln!(
-                "  pixel {i}: camera {in_px:?} -> working {out_px:?}"
-            );
+            eprintln!("  pixel {i}: camera {in_px:?} -> working {out_px:?}");
         }
     }
 }

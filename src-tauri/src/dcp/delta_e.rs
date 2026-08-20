@@ -109,11 +109,7 @@ fn hue_angle_deg(a: f64, b: f64) -> f64 {
         return 0.0;
     }
     let h = b.atan2(a).to_degrees();
-    if h < 0.0 {
-        h + 360.0
-    } else {
-        h
-    }
+    if h < 0.0 { h + 360.0 } else { h }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +183,9 @@ pub fn prophoto_to_lab(rgb: [f64; 3], xyz_to_prophoto: &[f64; 9]) -> [f64; 3] {
         xyz_to_prophoto[7],
         xyz_to_prophoto[8],
     );
-    let m_inv = m.try_inverse().unwrap_or_else(nalgebra::Matrix3::<f64>::identity);
+    let m_inv = m
+        .try_inverse()
+        .unwrap_or_else(nalgebra::Matrix3::<f64>::identity);
     let v = m_inv * nalgebra::Vector3::new(rgb[0], rgb[1], rgb[2]);
     xyz_to_lab([v[0], v[1], v[2]])
 }
@@ -234,7 +232,7 @@ pub struct DeltaEStats {
 /// linear ProPhoto) are excluded from stats but counted separately.
 pub fn compute_stats(
     delta_es: &[f64],
-    shadow_mask: &[bool],   // true = excluded as deep shadow
+    shadow_mask: &[bool],    // true = excluded as deep shadow
     highlight_mask: &[bool], // true = excluded as clipped highlight
 ) -> DeltaEStats {
     let excluded_by_shadow = shadow_mask.iter().filter(|&&x| x).count();
@@ -356,25 +354,65 @@ mod tests {
         // Pair 24: small hue difference near 0°
         ([50.0, 2.5, 0.0], [50.0, 3.2592, 0.3350], 1.0000),
         // Pair 25: L*=60 region
-        ([60.2574, -34.0099, 36.2677], [60.4626, -34.1751, 39.4387], 1.2644),
+        (
+            [60.2574, -34.0099, 36.2677],
+            [60.4626, -34.1751, 39.4387],
+            1.2644,
+        ),
         // Pair 26: medium-chroma green pair
-        ([63.0109, -31.0961, -5.8663], [62.8187, -29.7946, -4.0864], 1.2630),
+        (
+            [63.0109, -31.0961, -5.8663],
+            [62.8187, -29.7946, -4.0864],
+            1.2630,
+        ),
         // Pair 27: medium-high chroma yellow-green
-        ([61.2901, 3.7196, -5.3901], [61.4292, 2.2480, -4.9620], 1.8731),
+        (
+            [61.2901, 3.7196, -5.3901],
+            [61.4292, 2.2480, -4.9620],
+            1.8731,
+        ),
         // Pair 28: L*=35 region, low-chroma
-        ([35.0831, -44.1164, 3.7933], [35.0232, -40.0716, 1.5901], 1.8645),
+        (
+            [35.0831, -44.1164, 3.7933],
+            [35.0232, -40.0716, 1.5901],
+            1.8645,
+        ),
         // Pair 29: high-chroma yellow at low L*
-        ([22.7233, 20.0904, -46.6940], [23.0331, 14.9730, -42.5619], 2.0373),
+        (
+            [22.7233, 20.0904, -46.6940],
+            [23.0331, 14.9730, -42.5619],
+            2.0373,
+        ),
         // Pair 30: high-chroma red/orange
-        ([36.4612, 47.8580, 18.3852], [36.2715, 50.5065, 21.2231], 1.4146),
+        (
+            [36.4612, 47.8580, 18.3852],
+            [36.2715, 50.5065, 21.2231],
+            1.4146,
+        ),
         // Pair 31: high-chroma blue at low L*
-        ([90.8027, -2.0831, 1.4410], [91.1528, -1.6435, 0.0447], 1.4441),
+        (
+            [90.8027, -2.0831, 1.4410],
+            [91.1528, -1.6435, 0.0447],
+            1.4441,
+        ),
         // Pair 32: very close neutral at high L*
-        ([90.9257, -0.5406, -0.9208], [88.6381, -0.8985, -0.7239], 1.5381),
+        (
+            [90.9257, -0.5406, -0.9208],
+            [88.6381, -0.8985, -0.7239],
+            1.5381,
+        ),
         // Pair 33: medium L*, blue region
-        ([6.7747, -0.2908, -2.4247], [5.8714, -0.0985, -2.2286], 0.6377),
+        (
+            [6.7747, -0.2908, -2.4247],
+            [5.8714, -0.0985, -2.2286],
+            0.6377,
+        ),
         // Pair 34: very dark near-neutral
-        ([2.0776, 0.0795, -1.1350], [0.9033, -0.0636, -0.5514], 0.9082),
+        (
+            [2.0776, 0.0795, -1.1350],
+            [0.9033, -0.0636, -0.5514],
+            0.9082,
+        ),
     ];
 
     /// Verify CIEDE2000 against all 34 published Sharma test pairs.
@@ -509,8 +547,12 @@ mod tests {
     #[test]
     fn stats_excludes_shadows_and_highlights() {
         let de: Vec<f64> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
-        let shadows = vec![true, false, false, false, false, false, false, false, false, false];
-        let highlights = vec![false, false, false, false, false, false, false, false, false, true];
+        let shadows = vec![
+            true, false, false, false, false, false, false, false, false, false,
+        ];
+        let highlights = vec![
+            false, false, false, false, false, false, false, false, false, true,
+        ];
         let s = compute_stats(&de, &shadows, &highlights);
         assert_eq!(s.count, 8);
         assert_eq!(s.deep_shadows_excluded, 1);
