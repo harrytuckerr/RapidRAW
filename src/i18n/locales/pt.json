@@ -1143,7 +1143,8 @@
       "typeStyleDesc": "Aplica o visual completo. Isso substituirá todas as suas configurações atuais para corresponder exatamente à predefinição.",
       "typeStyleLabel": "Estilo",
       "typeToolDesc": "Aplica apenas alterações específicas sem tocar em suas outras configurações.",
-      "typeToolLabel": "Ferramenta"
+      "typeToolLabel": "Ferramenta",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "Cancelar",
@@ -1962,5 +1963,23 @@
         "vectorscope": "Vetorscópio"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

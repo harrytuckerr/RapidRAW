@@ -1167,7 +1167,8 @@
       "typeStyleDesc": "Применяет оформление целиком. Все ваши текущие настройки будут перезаписаны для точного соответствия пресету.",
       "typeStyleLabel": "Стиль",
       "typeToolDesc": "Применяет только определенные настройки, не затрагивая остальные параметры.",
-      "typeToolLabel": "Инструмент"
+      "typeToolLabel": "Инструмент",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "Отмена",
@@ -1997,5 +1998,23 @@
         "vectorscope": "Вектороскоп"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

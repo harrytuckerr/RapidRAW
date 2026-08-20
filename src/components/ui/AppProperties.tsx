@@ -320,6 +320,7 @@ export interface Preset {
   name: string;
   includeMasks?: boolean;
   includeCropTransform?: boolean;
+  includeProfile?: boolean;
   presetType?: 'tool' | 'style';
 }
 

@@ -1117,7 +1117,8 @@
       "typeStyleDesc": "应用完整外观。这将覆盖您当前的所有设置以完全匹配预设。",
       "typeStyleLabel": "风格",
       "typeToolDesc": "仅应用特定更改而不影响您的其他设置。",
-      "typeToolLabel": "工具"
+      "typeToolLabel": "工具",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "取消",
@@ -1925,5 +1926,23 @@
         "vectorscope": "矢量示波器"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

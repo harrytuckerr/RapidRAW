@@ -1117,7 +1117,8 @@
       "typeStyleDesc": "全体のルックを適用します。プリセットと完全に一致するように現在の設定がすべて上書きされます。",
       "typeStyleLabel": "スタイル",
       "typeToolDesc": "他の設定を変更せずに、特定の設定のみを適用します。",
-      "typeToolLabel": "ツール"
+      "typeToolLabel": "ツール",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "キャンセル",
@@ -1925,5 +1926,23 @@
         "vectorscope": "ベクトルスコープ"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

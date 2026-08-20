@@ -1117,7 +1117,8 @@
       "typeStyleDesc": "전체적인 모습을 적용합니다. 현재 모든 설정을 프리셋과 정확히 일치하도록 덮어씁니다.",
       "typeStyleLabel": "스타일",
       "typeToolDesc": "다른 설정을 건드리지 않고 특정 변경 사항만 적용합니다.",
-      "typeToolLabel": "도구"
+      "typeToolLabel": "도구",
+      "includeProfile": "Include Profile"
     },
     "confirm": {
       "cancel": "취소",
@@ -1925,5 +1926,23 @@
         "vectorscope": "벡터스코프"
       }
     }
+  },
+  "profiles": {
+    "title": "Profile",
+    "placeholder": "None",
+    "amount": "Amount",
+    "searchPlaceholder": "Filter profiles…",
+    "noResults": "No matching profiles.",
+    "clearSelection": "Clear selection",
+    "cameraProfiles": "Camera Profiles",
+    "cameraProfilesFor": "Camera profiles for {{camera}}",
+    "importFilterName": "Profile Files (.dcp, .xmp)",
+    "importTooltip": "Import profiles",
+    "importSuccess_one": "Imported {{count}} profile.",
+    "importSuccess_other": "Imported {{count}} profiles.",
+    "importFailed": "Some profiles failed to import:",
+    "importNone": "No profile files were found.",
+    "resetTooltip": "Clear profile selection",
+    "rescanComplete": "Profile rescan complete."
   }
 }

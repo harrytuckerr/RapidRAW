@@ -922,6 +922,7 @@ export default function PresetsPanel({ onNavigateToCommunity }: PresetsPanelProp
     includeMasks: boolean,
     includeCropTransform: boolean,
     presetType: 'tool' | 'style',
+    includeProfile: boolean,
   ) => {
     if (configureModalState.preset) {
       const updated = configurePreset(
@@ -930,12 +931,13 @@ export default function PresetsPanel({ onNavigateToCommunity }: PresetsPanelProp
         includeMasks,
         includeCropTransform,
         presetType,
+        includeProfile,
       );
       if (updated) {
         await generateSinglePreview(updated);
       }
     } else {
-      const newPreset = addPreset(name, null, includeMasks, includeCropTransform, presetType);
+      const newPreset = addPreset(name, null, includeMasks, includeCropTransform, presetType, includeProfile);
       if (newPreset) {
         await generateSinglePreview(newPreset);
       }

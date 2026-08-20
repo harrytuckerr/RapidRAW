@@ -11,7 +11,13 @@ import { ADJUSTMENT_GROUPS } from '../../utils/adjustments';
 interface ConfigurePresetModalProps {
   isOpen: boolean;
   onClose(): void;
-  onSave(name: string, includeMasks: boolean, includeCropTransform: boolean, presetType: 'tool' | 'style'): void;
+  onSave(
+    name: string,
+    includeMasks: boolean,
+    includeCropTransform: boolean,
+    presetType: 'tool' | 'style',
+    includeProfile: boolean,
+  ): void;
   initialPreset?: Preset | null;
 }
 
@@ -104,6 +110,7 @@ export default function ConfigurePresetModal({ isOpen, onClose, onSave, initialP
   const [name, setName] = useState('');
   const [includeMasks, setIncludeMasks] = useState(false);
   const [includeCropTransform, setIncludeCropTransform] = useState(false);
+  const [includeProfile, setIncludeProfile] = useState(false);
   const [presetType, setPresetType] = useState<'tool' | 'style'>('style');
   const [isMounted, setIsMounted] = useState(false);
   const [show, setShow] = useState(false);
@@ -123,6 +130,7 @@ export default function ConfigurePresetModal({ isOpen, onClose, onSave, initialP
       setIncludeCropTransform(initialPreset?.includeCropTransform ?? hasGeometry ?? false);
 
       setPresetType(initialPreset?.presetType || 'style');
+      setIncludeProfile(initialPreset?.includeProfile ?? false);
       setIsMounted(true);
       const timer = setTimeout(() => setShow(true), 10);
       return () => clearTimeout(timer);
@@ -133,6 +141,7 @@ export default function ConfigurePresetModal({ isOpen, onClose, onSave, initialP
         setName('');
         setIncludeMasks(false);
         setIncludeCropTransform(false);
+        setIncludeProfile(false);
         setPresetType('style');
       }, 300);
       return () => clearTimeout(timer);
@@ -141,7 +150,7 @@ export default function ConfigurePresetModal({ isOpen, onClose, onSave, initialP
 
   const handleSave = useCallback(() => {
     if (name.trim()) {
-      onSave(name.trim(), includeMasks, includeCropTransform, presetType);
+      onSave(name.trim(), includeMasks, includeCropTransform, presetType, includeProfile);
       onClose();
     }
   }, [name, includeMasks, includeCropTransform, presetType, onSave, onClose]);
@@ -200,6 +209,11 @@ export default function ConfigurePresetModal({ isOpen, onClose, onSave, initialP
             label={t('modals.configurePreset.includeCropTransform')}
             checked={includeCropTransform}
             onChange={setIncludeCropTransform}
+          />
+          <Switch
+            label={t('modals.configurePreset.includeProfile')}
+            checked={includeProfile}
+            onChange={setIncludeProfile}
           />
         </div>
 

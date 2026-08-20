@@ -227,6 +227,7 @@ export interface Adjustments {
   lutIsSceneReferred?: boolean;
   masks: Array<MaskContainer>;
   orientationSteps: number;
+  profile: ProfileSelection;
   rotation: number;
   saturation: number;
   sectionVisibility: SectionVisibility;
@@ -353,6 +354,12 @@ export interface MaskContainer {
   opacity: number;
   subMasks: Array<SubMask>;
   visible: boolean;
+}
+
+export interface ProfileSelection {
+  base: string | null;
+  look: string | null;
+  amount: number;
 }
 
 export interface Sections {
@@ -564,6 +571,11 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
   lutIsSceneReferred: false,
   masks: [],
   orientationSteps: 0,
+  profile: {
+    base: null,
+    look: null,
+    amount: 100,
+  },
   rotation: 0,
   saturation: 0,
   sectionVisibility: {
@@ -729,6 +741,13 @@ export const normalizeLoadedAdjustments = (loadedAdjustments: Adjustments): any 
       ...(loadedAdjustments.sectionVisibility || {}),
     },
     sharpnessThreshold: loadedAdjustments.sharpnessThreshold ?? INITIAL_ADJUSTMENTS.sharpnessThreshold,
+    profile: loadedAdjustments.profile
+      ? {
+          base: loadedAdjustments.profile.base ?? null,
+          look: loadedAdjustments.profile.look ?? null,
+          amount: loadedAdjustments.profile.amount ?? INITIAL_ADJUSTMENTS.profile.amount,
+        }
+      : { ...INITIAL_ADJUSTMENTS.profile },
   };
 };
 
