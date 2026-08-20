@@ -60,6 +60,10 @@ half = { version = "2.7.1", features = ["bytemuck"] }
 glam = "0.33.2"
 quick-xml = { version = "0.41", features = ["serialize"] }
 fuzzy-matcher = "0.3.7"
+# Cobalt Look tables (dng_big_table) are zlib-compressed after base85.
+# No existing dependency provides RFC 1950 inflate. Pure-Rust miniz_oxide
+# backend keeps the Android build free of system C deps (no `zlib` feature).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 image-hdr = { version = "0.6.0", default-features = false }
 mozjpeg-rs = "0.9.2"
 webp = "0.3"
