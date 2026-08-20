@@ -13,7 +13,7 @@ pub type Mat3 = nalgebra::Matrix3<f32>;
 
 /// Stable content-derived identity for a profile: the blake3 hash of the raw
 /// file bytes. Two paths that point at identical bytes share one `ProfileId`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ProfileId(pub [u8; 32]);
 
 impl ProfileId {

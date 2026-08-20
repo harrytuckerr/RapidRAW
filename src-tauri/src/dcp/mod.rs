@@ -15,10 +15,16 @@
 // sprinkling `#[allow]` per item.
 #![allow(dead_code)]
 
+pub mod camera_aliases;
+pub mod commands;
 pub mod interpolate;
 pub mod model;
 pub mod parser;
+pub mod registry;
 pub mod render;
+
+// Added by W7 on its own branch; reconcile at merge by uncommenting.
+// pub mod look_xmp;
 
 // Added by W7 on its own branch; reconcile at merge by uncommenting.
 // pub mod look_xmp;
@@ -28,6 +34,8 @@ pub mod render;
 pub use model::*;
 #[allow(unused_imports)]
 pub use parser::parse_dcp;
+#[allow(unused_imports)]
+pub use registry::*;
 
 use std::fmt;
 

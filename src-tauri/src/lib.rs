@@ -1997,9 +1997,13 @@ pub fn run() {
                 });
             }
 
+            // Background DCP/Look discovery — must never block startup (§5.4).
+            // Emits `profiles-rescanned` on completion.
+            dcp::commands::start_background_rescan(app_handle.clone());
+            dcp::commands::log_discovery_roots();
+
             let config_dir = app_handle.path().app_config_dir().expect("Failed to get config dir");
             let crash_flag_path = config_dir.join(".gpu_init_crash_flag");
-
             {
                 let state = app.state::<AppState>();
                 *state.gpu_crash_flag_path.lock().unwrap() = Some(crash_flag_path.clone());
@@ -2302,6 +2306,7 @@ pub fn run() {
             disks_cache: Mutex::new(None),
             disks_cache_refreshing: AtomicBool::new(false),
             camera_session: Mutex::new(camera_tethering::CameraSession::new()),
+            profile_registry: Arc::new(dcp::registry::ProfileRegistry::new()),
         })
         .invoke_handler(tauri::generate_handler![
             apply_adjustments,
@@ -2320,6 +2325,10 @@ pub fn run() {
             lut_processing::import_luts,
             lut_processing::remove_lut,
             lut_processing::generate_lut_previews,
+            dcp::commands::list_profiles_for_image,
+            dcp::commands::import_profiles,
+            dcp::commands::remove_profile,
+            dcp::commands::rescan_profiles,
             fetch_community_presets,
             generate_all_community_previews,
             save_temp_file,
