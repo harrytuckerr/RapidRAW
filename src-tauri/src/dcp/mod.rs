@@ -1,14 +1,13 @@
 //! Adobe DNG Camera Profile (DCP) pipeline.
 //!
-//! Assembled by several workstreams of the Cobalt DCP project. This branch
-//! (W1) adds the binary `IIRC` DCP reader: `parser` + `model`. A parallel
-//! workstream (W7) adds `look_xmp` (Cobalt Look XMP parsing) on a separate
-//! branch; when the two PRs merge, this file's module list and `DcpError`
-//! variants are reconciled by combining them (the declarations below are
-//! deliberately additive).
+//! Assembled by several workstreams of the Cobalt DCP project. W1 adds the
+//! binary `IIRC` DCP reader (`parser`, `model`). W2 adds the CPU reference
+//! render (`interpolate`, `render`). W5 adds the registry and pairing
+//! (`registry`, `camera_aliases`, `commands`). W7 adds `look_xmp` (Cobalt Look
+//! XMP parsing + the embedded RGB look-table decoder, Route A).
 //!
-//! Re-exports and `DcpError` live here so later workstreams (W2, W5, W6) build
-//! on them rather than redefining them.
+//! Re-exports and `DcpError` live here so later workstreams build on them
+//! rather than redefining them.
 
 // The reader API is consumed by W2/W5/W6; until those land, no path reaches it
 // from the binary crate, so suppress dead-code for the module rather than
@@ -18,18 +17,15 @@
 pub mod camera_aliases;
 pub mod commands;
 pub mod interpolate;
+pub mod look_xmp;
 pub mod model;
 pub mod parser;
 pub mod registry;
 pub mod render;
 
-// Added by W7 on its own branch; reconcile at merge by uncommenting.
-// pub mod look_xmp;
-
-// Added by W7 on its own branch; reconcile at merge by uncommenting.
-// pub mod look_xmp;
-
 // Re-exports are the public API surface for W2/W5/W6; unused until they land.
+#[allow(unused_imports)]
+pub use look_xmp::{CobaltLook, CobaltRgbTable, LookColorSpace, LookTableSource, LookTransfer};
 #[allow(unused_imports)]
 pub use model::*;
 #[allow(unused_imports)]
@@ -42,8 +38,8 @@ use std::fmt;
 /// Errors produced while reading Adobe camera profiles and Cobalt Looks.
 ///
 /// The `NotACobaltLook` / `MissingField` / `InvalidValue` / `TableDecode`
-/// variants are shared with W7 (Cobalt Look XMP parsing); the remaining
-/// variants cover the binary DCP (`IIRC`) reader added by W1.
+/// variants cover W7 (Cobalt Look XMP parsing); the remaining variants cover
+/// the binary DCP (`IIRC`) reader added by W1.
 #[derive(Debug)]
 pub enum DcpError {
     // W7 (Cobalt Look XMP) variants.
@@ -53,7 +49,10 @@ pub enum DcpError {
     /// A required Cobalt Look field was absent.
     MissingField(&'static str),
     /// A supplied value could not be interpreted (boolean, table, ...).
-    InvalidValue { field: &'static str, detail: String },
+    InvalidValue {
+        field: &'static str,
+        detail: String,
+    },
     /// The embedded look table (dng_big_table / dng_rgb_table) failed to decode.
     TableDecode(String),
 
@@ -61,11 +60,14 @@ pub enum DcpError {
     /// The file is not a DCP: bad `II` byte order or `0x4352` magic, or it is
     /// big-endian (`MM`), which DCP never is.
     InvalidHeader(String),
-    /// A structural read went out of bounds — the file is truncated or an
+    /// A structural read went out of bounds - the file is truncated or an
     /// offset/length is corrupt.
     Truncated(String),
     /// A tag could not be parsed (wrong type, wrong count, unsupported value).
-    BadTag { tag: u16, detail: String },
+    BadTag {
+        tag: u16,
+        detail: String,
+    },
     /// A file or single tag exceeds a safety size limit.
     Oversized(String),
     /// Underlying filesystem/IO error.
