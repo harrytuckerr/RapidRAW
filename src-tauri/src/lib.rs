@@ -15,7 +15,7 @@ mod app_state;
 mod cache_utils;
 mod camera_tethering;
 mod culling;
-mod dcp;
+pub mod dcp;
 mod denoising;
 mod exif_processing;
 mod export_processing;
