@@ -724,8 +724,16 @@ mod tests {
     #[test]
     #[ignore]
     fn all_supplied_looks_parse_and_pass_acceptance() {
+        if std::env::var("RAPIDRAW_TEST_ASSETS").as_deref() != Ok("1") {
+            eprintln!("SKIPPED: RAPIDRAW_TEST_ASSETS not set — cannot run Look acceptance tests");
+            return;
+        }
         let dir = std::env::var("RAPIDRAW_LOOKS_DIR")
             .unwrap_or_else(|_| "/Users/harrisontucker/Downloads/Cobalt_CCD_Fever_3".to_string());
+        if !std::path::Path::new(&dir).is_dir() {
+            eprintln!("SKIPPED: Looks directory not found at {dir}");
+            return;
+        }
         let mut found = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap();
