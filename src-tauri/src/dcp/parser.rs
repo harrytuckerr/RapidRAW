@@ -1114,6 +1114,7 @@ mod tests {
         let path =
             Path::new("/Users/harrisontucker/Downloads/Fujifilm X-Pro2 Cobalt Flat v3.0.dcp");
         if std::env::var("RAPIDRAW_TEST_ASSETS").as_deref() != Ok("1") {
+            eprintln!("SKIPPED: RAPIDRAW_TEST_ASSETS not set — cannot parse supplied DCP");
             return;
         }
         assert!(path.exists(), "supplied DCP not present: {path:?}");
@@ -1179,6 +1180,9 @@ mod tests {
     #[ignore = "requires additional vendor DCPs; enable with RAPIDRAW_TEST_ASSETS=1"]
     fn round_trip_additional_vendor_dcps() {
         if std::env::var("RAPIDRAW_TEST_ASSETS").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIPPED: RAPIDRAW_TEST_ASSETS not set — cannot parse additional vendor DCPs"
+            );
             return;
         }
         let dir = Path::new("test-assets/dcp");

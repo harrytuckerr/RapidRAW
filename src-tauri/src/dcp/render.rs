@@ -1436,6 +1436,9 @@ mod tests {
     #[ignore = "requires vendor DCP; enable with RAPIDRAW_TEST_ASSETS=1"]
     fn vendor_dcp_neutral_axis() {
         if std::env::var("RAPIDRAW_TEST_ASSETS").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIPPED: RAPIDRAW_TEST_ASSETS not set — cannot run vendor DCP neutral axis test"
+            );
             return;
         }
         let path = std::path::Path::new(
