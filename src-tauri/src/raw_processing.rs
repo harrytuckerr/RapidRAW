@@ -12,6 +12,16 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+/// Camera metadata captured from RawImage before it is dropped,
+/// needed by the DCP profile stage (§4.1).
+#[derive(Clone, Debug)]
+pub struct RawImageMeta {
+    pub wb_coeffs: [f32; 4],
+    pub make: String,
+    pub model: String,
+    pub clean_model: String,
+}
+
 pub fn develop_raw_image(
     file_bytes: &[u8],
     fast_demosaic: bool,
@@ -19,14 +29,66 @@ pub fn develop_raw_image(
     linear_mode: String,
     cancel_token: Option<(Arc<AtomicUsize>, usize)>,
 ) -> Result<DynamicImage> {
-    let (developed_image, orientation) = develop_internal(
+    let (developed_image, orientation, _meta) = develop_internal(
         file_bytes,
         fast_demosaic,
         highlight_compression,
         linear_mode,
+        false, // no DCP profile
         cancel_token,
     )?;
     Ok(apply_orientation(developed_image, orientation))
+}
+
+/// Like `develop_raw_image` but returns camera metadata for DCP profile
+/// rendering and strips `Calibrate` when a profile is active (§3.1).
+#[allow(dead_code)]
+pub fn develop_raw_image_with_meta(
+    file_bytes: &[u8],
+    fast_demosaic: bool,
+    highlight_compression: f32,
+    linear_mode: String,
+    has_dcp_profile: bool,
+    cancel_token: Option<(Arc<AtomicUsize>, usize)>,
+) -> Result<(DynamicImage, Orientation, RawImageMeta)> {
+    develop_internal(
+        file_bytes,
+        fast_demosaic,
+        highlight_compression,
+        linear_mode,
+        has_dcp_profile,
+        cancel_token,
+    )
+}
+
+/// Full DCP-aware development: strip `Calibrate`, render to working space via
+/// `DcpRenderer`, apply orientation. Returns the working-space image plus the
+/// parsed DCP profile (for `EmbedNever` enforcement).
+///
+/// This is the single entry point for any pipeline that needs to render
+/// through a DCP camera profile. The caller passes the file bytes, a
+/// pre-built `DcpRenderer`, and development settings.
+pub fn develop_raw_with_dcp(
+    file_bytes: &[u8],
+    fast_demosaic: bool,
+    highlight_compression: f32,
+    linear_mode: String,
+    renderer: &crate::dcp::render::DcpRenderer,
+    cancel_token: Option<(Arc<AtomicUsize>, usize)>,
+) -> Result<DynamicImage> {
+    let (developed_image, orientation, _meta) = develop_internal(
+        file_bytes,
+        fast_demosaic,
+        highlight_compression,
+        linear_mode,
+        true, // has_dcp_profile — strips Calibrate
+        cancel_token,
+    )?;
+    // Apply DCP rendering (camera-native → working space) on CPU.
+    let mut f32_img = developed_image.to_rgb32f();
+    renderer.render_slice(f32_img.as_mut());
+    let working = DynamicImage::ImageRgb32F(f32_img);
+    Ok(apply_orientation(working, orientation))
 }
 
 fn is_linear_raw_format(raw_image: &RawImage) -> bool {
@@ -50,8 +112,9 @@ fn develop_internal(
     fast_demosaic: bool,
     highlight_compression: f32,
     linear_mode: String,
+    has_dcp_profile: bool,
     cancel_token: Option<(Arc<AtomicUsize>, usize)>,
-) -> Result<(DynamicImage, Orientation)> {
+) -> Result<(DynamicImage, Orientation, RawImageMeta)> {
     let check_cancel = || -> Result<()> {
         if let Some((tracker, generation)) = &cancel_token
             && tracker.load(Ordering::SeqCst) != *generation
@@ -85,6 +148,9 @@ fn develop_internal(
         _ => (false, true),
     };
 
+    // DCP profile replaces the camera calibration step (§3.1).
+    let keep_calibrate = apply_calibration && !has_dcp_profile;
+
     let original_white_level = raw_image
         .whitelevel
         .0
@@ -108,17 +174,29 @@ fn develop_internal(
         developer.steps.retain(|&step| {
             step != ProcessingStep::SRgb
                 && step != ProcessingStep::Demosaic
-                && (apply_calibration || step != ProcessingStep::Calibrate)
+                && (keep_calibrate || step != ProcessingStep::Calibrate)
         });
     } else if fast_demosaic {
         developer.demosaic_algorithm = DemosaicAlgorithm::Speed;
-        developer.steps.retain(|&step| step != ProcessingStep::SRgb);
+        developer.steps.retain(|&step| {
+            step != ProcessingStep::SRgb && (keep_calibrate || step != ProcessingStep::Calibrate)
+        });
     } else {
-        developer.steps.retain(|&step| step != ProcessingStep::SRgb);
+        developer.steps.retain(|&step| {
+            step != ProcessingStep::SRgb && (keep_calibrate || step != ProcessingStep::Calibrate)
+        });
     }
 
     raw_image.wb_coeffs =
         crate::multi_exposure::neutralize_wb_if_multiexposure(raw_image.wb_coeffs, file_bytes);
+
+    // Capture camera metadata BEFORE drop for DCP profile rendering (§4.1).
+    let raw_meta = RawImageMeta {
+        wb_coeffs: raw_image.wb_coeffs,
+        make: raw_image.make.clone(),
+        model: raw_image.model.clone(),
+        clean_model: raw_image.clean_model.clone(),
+    };
 
     check_cancel()?;
     let mut developed_intermediate = developer.develop_intermediate(&raw_image)?;
@@ -230,7 +308,7 @@ fn develop_internal(
         }
     };
 
-    Ok((dynamic_image, orientation))
+    Ok((dynamic_image, orientation, raw_meta))
 }
 
 pub fn get_fast_demosaic_scale_factor(

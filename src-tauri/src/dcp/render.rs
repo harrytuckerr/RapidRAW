@@ -389,6 +389,38 @@ impl DcpRenderer {
             px[2] = out[2];
         });
     }
+
+    // ---- Accessors for W4 (pipeline integration) --------------------------
+
+    /// The interpolated HueSatMap, if the profile has one.
+    pub fn hue_sat_map(&self) -> Option<&HsvTable> {
+        self.hue_sat_map.as_ref()
+    }
+
+    /// The LookTable, if the profile has one.
+    pub fn look_table(&self) -> Option<&HsvTable> {
+        self.look_table.as_ref()
+    }
+
+    /// The resampled tone-curve LUT (4096 entries), if the profile has one.
+    pub fn tone_curve_lut(&self) -> Option<&Vec<f32>> {
+        self.tone_curve_lut.as_ref()
+    }
+
+    /// Encoding of the HueSatMap table.
+    pub fn hue_sat_map_encoding(&self) -> TableEncoding {
+        self.hue_sat_map_encoding
+    }
+
+    /// Encoding of the LookTable.
+    pub fn look_table_encoding(&self) -> TableEncoding {
+        self.look_table_encoding
+    }
+
+    /// The baseline exposure offset from the profile, in stops.
+    pub fn baseline_exposure_offset(&self) -> f32 {
+        self.baseline_exposure_offset
+    }
 }
 
 /// Public selector for the tone-curve above-1.0 behaviour.

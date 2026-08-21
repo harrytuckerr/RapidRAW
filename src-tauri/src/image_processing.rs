@@ -14,7 +14,7 @@ use std::f32::consts::PI;
 use std::sync::Arc;
 
 pub use crate::gpu_processing::{
-    RenderRequest, get_or_init_gpu_context, process_and_get_dynamic_image,
+    DcpTextureData, RenderRequest, get_or_init_gpu_context, process_and_get_dynamic_image,
     process_and_get_dynamic_image_with_analytics,
 };
 use crate::{AppState, mask_generation::MaskDefinition};
@@ -1792,6 +1792,16 @@ fn mat3_to_gpu_mat3(m: Mat3) -> GpuMat3 {
     }
 }
 
+/// Convert a nalgebra 3×3 matrix (column-major) to the GPU-friendly layout.
+#[allow(dead_code)]
+fn nalgebra_m3_to_gpu_mat3(m: &nalgebra::Matrix3<f32>) -> GpuMat3 {
+    GpuMat3 {
+        col0: [m[(0, 0)], m[(1, 0)], m[(2, 0)], 0.0],
+        col1: [m[(0, 1)], m[(1, 1)], m[(2, 1)], 0.0],
+        col2: [m[(0, 2)], m[(1, 2)], m[(2, 2)], 0.0],
+    }
+}
+
 fn calculate_agx_matrices_glam() -> (Mat3, Mat3) {
     let pipe_work_profile_to_xyz = primaries_to_xyz_matrix(&PRIMARIES_SRGB, WP_D65);
     let base_profile_to_xyz = primaries_to_xyz_matrix(&PRIMARIES_REC2020, WP_D65);
@@ -2517,6 +2527,105 @@ pub fn get_all_adjustments_from_json(
         tile_offset_x: 0,
         tile_offset_y: 0,
         mask_atlas_cols: 1,
+    }
+}
+
+// ---- DCP profile integration (W4) ------------------------------------------
+
+/// Convert rawler's 4-channel `wb_coeffs` to a 3-channel `AsShotNeutral`
+/// (normalised to G=1, then inverted per §4.1).
+pub fn as_shot_neutral_from_wb(wb_coeffs: [f32; 4]) -> [f32; 3] {
+    let r = wb_coeffs[0];
+    let g = (wb_coeffs[1] + wb_coeffs[2]) * 0.5;
+    let b = wb_coeffs[3];
+    if g.abs() < 1e-9 {
+        return [1.0, 1.0, 1.0];
+    }
+    [g / r, 1.0, g / b]
+}
+
+/// Populate the DCP-related fields in `GlobalAdjustments` from a
+/// `DcpRenderer`. This is called after `get_all_adjustments_from_json` so
+/// the existing defaults are overwritten with real profile data.
+#[allow(dead_code)]
+pub fn set_dcp_uniforms(
+    global: &mut GlobalAdjustments,
+    renderer: &crate::dcp::render::DcpRenderer,
+    amount: f32,
+) {
+    use crate::dcp::model::TableEncoding;
+
+    global.has_dcp = 1;
+    global.dcp_amount = amount;
+    global.cam_to_prophoto = nalgebra_m3_to_gpu_mat3(&renderer.cam_to_prophoto());
+    global.prophoto_to_working = nalgebra_m3_to_gpu_mat3(&renderer.prophoto_to_working());
+
+    // HueSatMap dims and encoding.
+    if let Some(hsm) = renderer.hue_sat_map() {
+        global.dcp_huesat_dims = [hsm.hue_div, hsm.sat_div, hsm.val_div.max(1), 0];
+    }
+    global.dcp_huesat_encoding = match renderer.hue_sat_map_encoding() {
+        TableEncoding::Linear => 0,
+        TableEncoding::Srgb => 1,
+    };
+
+    // LookTable dims and encoding.
+    if let Some(look) = renderer.look_table() {
+        global.dcp_look_dims = [look.hue_div, look.sat_div, look.val_div.max(1), 0];
+    }
+    global.dcp_look_encoding = match renderer.look_table_encoding() {
+        TableEncoding::Linear => 0,
+        TableEncoding::Srgb => 1,
+    };
+}
+
+/// Build `DcpTextureData` from the renderer's interpolated tables for GPU
+/// upload. The HueSatMap and LookTable entries are expanded from `[f32;3]` to
+/// `[f32;4]` (alpha=1) and the tone curve is stored as-is.
+#[allow(dead_code)]
+pub fn dcp_texture_data_from_renderer(
+    renderer: &crate::dcp::render::DcpRenderer,
+) -> DcpTextureData {
+    // The renderer stores table data; we extract it via the public API.
+    // Tables are Option<HsvTable>; when absent we use 1×1×1 identity textures.
+    let (huesat, huesat_dims) = renderer.hue_sat_map().map_or_else(
+        || (vec![0.0f32, 1.0, 1.0, 1.0], [1, 1, 1]),
+        |t| {
+            let dims = [t.hue_div, t.sat_div, t.val_div.max(1)];
+            let mut rgba = Vec::with_capacity(t.data.len() * 4);
+            for entry in &t.data {
+                rgba.push(entry[0]);
+                rgba.push(entry[1]);
+                rgba.push(entry[2]);
+                rgba.push(1.0);
+            }
+            (rgba, dims)
+        },
+    );
+    let (look, look_dims) = renderer.look_table().map_or_else(
+        || (vec![0.0f32, 1.0, 1.0, 1.0], [1, 1, 1]),
+        |t| {
+            let dims = [t.hue_div, t.sat_div, t.val_div.max(1)];
+            let mut rgba = Vec::with_capacity(t.data.len() * 4);
+            for entry in &t.data {
+                rgba.push(entry[0]);
+                rgba.push(entry[1]);
+                rgba.push(entry[2]);
+                rgba.push(1.0);
+            }
+            (rgba, dims)
+        },
+    );
+    let tone_curve = renderer
+        .tone_curve_lut()
+        .cloned()
+        .unwrap_or_else(|| (0..4096).map(|i| i as f32 / 4095.0).collect());
+    DcpTextureData {
+        huesat,
+        huesat_dims,
+        look,
+        look_dims,
+        tone_curve,
     }
 }
 

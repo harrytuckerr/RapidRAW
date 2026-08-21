@@ -160,6 +160,15 @@ pub fn calculate_transform_hash(adjustments: &serde_json::Value) -> u64 {
         crop_val.to_string().hash(&mut hasher);
     }
 
+    // DCP profile identity must participate in the hash (§6.W4 req 7)
+    // or stale thumbnails render with the wrong profile.
+    if let Some(profile_val) = adjustments.get("profile")
+        && !profile_val.is_null()
+    {
+        "profile".hash(&mut hasher);
+        profile_val.to_string().hash(&mut hasher);
+    }
+
     for key in GEOMETRY_KEYS {
         if let Some(val) = adjustments.get(key) {
             key.hash(&mut hasher);

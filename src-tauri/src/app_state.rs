@@ -36,6 +36,12 @@ pub struct LoadedImage {
     pub path: String,
     pub image: Arc<DynamicImage>,
     pub is_raw: bool,
+    /// Camera metadata for DCP profile rendering (§4.1, W4).
+    pub raw_meta: Option<crate::raw_processing::RawImageMeta>,
+    /// Raw file bytes, available only for RAW images. Retained so the image
+    /// can be re-developed with DCP profile (Calibrate stripped) when a
+    /// profile is selected after initial load (W4).
+    pub raw_bytes: Option<Arc<Vec<u8>>>,
 }
 
 #[derive(Clone)]

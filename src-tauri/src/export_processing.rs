@@ -458,6 +458,7 @@ fn process_image_for_export_pipeline(
             mask_bitmaps: &mask_bitmaps,
             lut,
             roi: None,
+            dcp_textures: None,
         },
         debug_tag,
     )
@@ -540,9 +541,22 @@ fn process_image_for_export(
     is_raw: bool,
     app_handle: &tauri::AppHandle,
 ) -> Result<DynamicImage, String> {
+    // When a DCP profile is active on a RAW file, re-develop from bytes with
+    // Calibrate stripped and the DCP renderer applied on CPU (§3.1, §6.W4).
+    let dcp_image = if is_raw
+        && let Some(profile_json) = js_adjustments.get("profile")
+        && profile_json.get("base").and_then(|b| b.as_str()).is_some()
+    {
+        load_dcp_processed_image(path, js_adjustments, state, app_handle)?
+    } else {
+        None
+    };
+
+    let image_for_pipeline = dcp_image.as_ref().unwrap_or(base_image);
+
     let processed_image = process_image_for_export_pipeline(
         path,
-        base_image,
+        image_for_pipeline,
         js_adjustments,
         context,
         state,
@@ -552,6 +566,88 @@ fn process_image_for_export(
     )?;
 
     apply_export_resize_and_watermark(processed_image, export_settings)
+}
+
+/// Re-develop a RAW file with DCP profile rendering to working space.
+///
+/// Reads the file bytes, resolves the profile, strips `Calibrate`,
+/// builds a `DcpRenderer`, and applies the full DCP chain on CPU.
+/// Returns the working-space image ready for GPU adjustments.
+///
+/// Returns `None` if the profile is missing, unparseable, or the
+/// renderer cannot be built — the caller falls back to the pre-loaded
+/// (non-profile) image.
+fn load_dcp_processed_image(
+    path: &str,
+    js_adjustments: &Value,
+    state: &tauri::State<AppState>,
+    app_handle: &tauri::AppHandle,
+) -> Result<Option<DynamicImage>, String> {
+    let profile_base = match js_adjustments
+        .get("profile")
+        .and_then(|p| p.get("base"))
+        .and_then(|b| b.as_str())
+    {
+        Some(id) if !id.is_empty() => id,
+        _ => return Ok(None),
+    };
+
+    let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
+    let highlight_compression = settings.raw_highlight_compression.unwrap_or(2.5);
+    let linear_mode = settings.linear_raw_mode.clone();
+
+    let file_bytes = std::fs::read(path).map_err(|e| format!("failed to read '{path}': {e}"))?;
+
+    // Get camera metadata from a lightweight parse (no demosaic).
+    let raw_meta = {
+        use rawler::{decoders::RawDecodeParams, rawsource::RawSource};
+        let source = RawSource::new_from_slice(&file_bytes);
+        let decoder =
+            rawler::get_decoder(&source).map_err(|e| format!("rawler decoder error: {e}"))?;
+        let raw_image = decoder
+            .raw_image(&source, &RawDecodeParams::default(), false)
+            .map_err(|e| format!("rawler parse error: {e}"))?;
+        crate::raw_processing::RawImageMeta {
+            wb_coeffs: raw_image.wb_coeffs,
+            make: raw_image.make,
+            model: raw_image.model,
+            clean_model: raw_image.clean_model,
+        }
+    };
+
+    let registry = state.profile_registry.clone();
+    let (renderer, _dcp_profile) = crate::dcp::commands::resolve_dcp_for_rendering(
+        &registry,
+        profile_base,
+        raw_meta.wb_coeffs,
+    )
+    .map_err(|e| {
+        log::warn!("DCP profile unavailable for export of '{path}': {e}");
+        e
+    })?;
+
+    // EmbedNever check: if the profile forbids embedding, log it but still render.
+    if matches!(
+        _dcp_profile.embed_policy,
+        crate::dcp::model::EmbedPolicy::EmbedNever
+    ) {
+        log::debug!(
+            "DCP profile '{}' has EmbedNever policy — honoured (not embedded in output).",
+            _dcp_profile.profile_name
+        );
+    }
+
+    let image = crate::raw_processing::develop_raw_with_dcp(
+        &file_bytes,
+        false, // full-quality demosaic for export
+        highlight_compression,
+        linear_mode,
+        &renderer,
+        None, // no cancel token for export sub-path
+    )
+    .map_err(|e| format!("DCP raw development failed: {e}"))?;
+
+    Ok(Some(image))
 }
 
 fn build_single_mask_adjustments(all: &AllAdjustments, mask_index: usize) -> AllAdjustments {
@@ -734,6 +830,7 @@ fn export_masks_for_image(
                     mask_bitmaps: &single_bitmaps,
                     lut: lut.clone(),
                     roi: None,
+                    dcp_textures: None,
                 },
                 "export_mask_image",
             )?;
@@ -834,6 +931,7 @@ fn export_adjustments_as_lut(
             mask_bitmaps: &[],
             lut,
             roi: None,
+            dcp_textures: None,
         },
         "export_lut",
     )?;
@@ -1519,6 +1617,7 @@ pub async fn estimate_export_sizes(
                 mask_bitmaps: &mask_bitmaps,
                 lut,
                 roi: None,
+                dcp_textures: None,
             },
             "estimate_export_size",
         )?;
@@ -1657,6 +1756,7 @@ pub async fn estimate_export_sizes(
                 mask_bitmaps: &mask_bitmaps,
                 lut,
                 roi: None,
+                dcp_textures: None,
             },
             "estimate_batch_export_size",
         )?;

@@ -516,6 +516,7 @@ fn process_preview_job(
                 mask_bitmaps: &mask_bitmaps,
                 lut,
                 roi: pixel_roi,
+                dcp_textures: None,
             },
             "apply_adjustments",
             use_wgpu_renderer,
@@ -826,6 +827,7 @@ fn generate_uncropped_preview(
                 mask_bitmaps: &mask_bitmaps,
                 lut,
                 roi: None,
+                dcp_textures: None,
             },
             "generate_uncropped_preview",
         ) {
@@ -1000,6 +1002,7 @@ async fn preview_geometry_transform(
                     mask_bitmaps: &mask_bitmaps,
                     lut,
                     roi: None,
+                    dcp_textures: None,
                 },
                 "preview_geometry_transform_base_gen",
             )?;
@@ -1182,6 +1185,7 @@ fn generate_preset_preview(
             mask_bitmaps: &mask_bitmaps,
             lut,
             roi: None,
+            dcp_textures: None,
         },
         "generate_preset_preview",
     )?;
@@ -1333,6 +1337,7 @@ async fn generate_all_community_previews(
                     mask_bitmaps: &mask_bitmaps,
                     lut,
                     roi: None,
+                    dcp_textures: None,
                 },
                 "generate_all_community_previews",
             )?;
@@ -1615,6 +1620,7 @@ async fn generate_preview_for_path(
                 mask_bitmaps: &mask_bitmaps,
                 lut,
                 roi: None,
+                dcp_textures: None,
             },
             "generate_preview_for_path",
         )?;
