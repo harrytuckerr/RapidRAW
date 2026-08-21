@@ -286,7 +286,8 @@ export default function ProfileBrowser({
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         className={clsx(
-          'w-full border border-border-color rounded-md px-3 py-2 flex justify-between items-center text-left',
+          'w-full border border-border-color rounded-md px-3 py-2.5 flex justify-between items-center text-left',
+          'min-h-[44px]',
           'focus:ring-accent focus:border-accent focus:outline-hidden focus:ring-2',
           'bg-surface hover:bg-card-active transition-colors',
         )}
@@ -369,7 +370,7 @@ export default function ProfileBrowser({
                       )}
                       <button
                         className={clsx(
-                          'w-full text-left px-3 py-1.5 rounded-md flex items-center justify-between transition-colors duration-150',
+                          'w-full text-left px-3 py-2.5 rounded-md flex items-center justify-between transition-colors duration-150 min-h-[44px]',
                           {
                             'hover:bg-bg-primary cursor-pointer': !isDisabled,
                             'opacity-40 cursor-not-allowed': isDisabled,
@@ -402,7 +403,7 @@ export default function ProfileBrowser({
                 {(activeBase || activeLook) && (
                   <div className="border-t border-border-color mt-1 pt-1">
                     <button
-                      className="w-full text-left px-3 py-1.5 rounded-md hover:bg-bg-primary transition-colors duration-150"
+                      className="w-full text-left px-3 py-2.5 rounded-md hover:bg-bg-primary transition-colors duration-150 min-h-[44px]"
                       onClick={() => {
                         onClear();
                         setIsOpen(false);
