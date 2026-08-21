@@ -838,7 +838,6 @@ mod tests {
             .unwrap();
         rx.recv().unwrap().unwrap();
         let data = sl.get_mapped_range().to_vec();
-        drop(sl);
         rb.unmap();
 
         // ---- 5. Compare ----------------------------------------------------
@@ -848,7 +847,7 @@ mod tests {
             let so = row * pbpr as usize;
             for col in 0..512 {
                 let pi = (row * 512 + col) * 3;
-                let gr = (data[so + col * 4 + 0] as f32) / 255.0;
+                let gr = (data[so + col * 4] as f32) / 255.0;
                 let gg = (data[so + col * 4 + 1] as f32) / 255.0;
                 let gb = (data[so + col * 4 + 2] as f32) / 255.0;
                 let d = (gr - cpu_rgb[pi])
