@@ -17,7 +17,57 @@
 
 </div>
 
-# RapidRAW
+# RapidRAW — Cobalt DCP Fork
+
+> **This is a fork of [RapidRAW](https://github.com/CyberTimon/RapidRAW) by [Timon Käch](https://github.com/CyberTimon) (AGPL-3.0).** The upstream project is a beautiful, fast RAW editor. This fork adds Adobe DNG Camera Profile (DCP) support — a first-class profile slot holding a base camera profile plus an optional Cobalt Look, sitting underneath every other adjustment.
+
+## What this fork adds
+
+**Camera profiles in RapidRAW.** Select a Cobalt camera profile from a profile dropdown, optionally layer a Cobalt Look on top, dial it with an Amount slider, and render through a dual-illuminant DCP pipeline — on desktop (macOS, Windows, Linux). Your existing presets, masks and LUTs stack on top unchanged. With no profile selected, output is bit-identical to upstream.
+
+**Status as of 2026-08-21:**
+
+| Feature | Status |
+|---------|--------|
+| DCP binary parser (hand-written IFD reader, fuzz-tested) | Working |
+| CPU reference render (dual-illuminant, ForwardMatrix, HueSatMap, LookTable, ToneCurve) | Working |
+| GPU/WGSL render path (compute shader, same chain) | Working |
+| Pipeline integration (RAW processing, export, thumbnails, cache invalidation) | Working |
+| Profile registry + camera pairing (two-key lookup, exact matching, no fuzzy fallback) | Working |
+| Desktop UI (profile browser, Amount slider, import, disabled-Look messaging) | Working |
+| Cobalt Look native decode (Route A — dng_big_table decoder, all 17 supplied Looks decode) | Working |
+| Cobalt Look Profile Capture fallback (Route B — HALD export + ACR round-trip + re-import) | Working |
+| CIEDE2000 validation harness (Sharma-verified, 14 synthetic CI tests) | Working |
+| ACR-reference delta-E validation (reference TIFFs not yet produced) | Deferred |
+| Android (SAF import, GLES fallback) | In progress |
+| **Selecting no profile produces bit-identical output to upstream** | Verified |
+
+## Getting started with profiles
+
+1. Install the Cobalt base DCP for your camera body (purchased separately from Cobalt Image).
+2. Install any Cobalt Look XMPs you own (such as "CCD Fever").
+3. RapidRAW auto-discovers Adobe's CameraRaw directories on macOS and Windows, or use the Import button.
+4. Open a RAW file, pick a base profile or a Look from the profile dropdown at the top of the adjustments panel.
+
+See [`docs/profiles.md`](docs/profiles.md) for the full user guide.
+See [`docs/dcp-pipeline.md`](docs/dcp-pipeline.md) for the developer reference (render chain, VERIFY items, known limitations).
+See [`docs/BUILD.md`](docs/BUILD.md) for desktop and Android build instructions.
+
+## Licensing
+
+This fork remains **AGPL-3.0**, identical to upstream. No Adobe code, Cobalt code, or Cobalt profile assets are redistributed in this repository — in source, in tests, in fixtures, or in built binaries. Users install their own lawfully-purchased profile files. A profile's `ProfileEmbedPolicy` (e.g. `EmbedNever`) is honoured on export. See [`NOTICE.md`](NOTICE.md).
+
+## Branch
+
+All Cobalt development happens on `cobalt/main`. The `main` branch tracks upstream `CyberTimon/RapidRAW:main` so upstream changes can be merged without conflict archaeology.
+
+## Upstream
+
+Everything below is the upstream RapidRAW README (© Timon Käch, AGPL-3.0).
+
+---
+
+# Upstream RapidRAW
 
 > A beautiful, non-destructive, and GPU-accelerated RAW image editor built with performance in mind.
 
