@@ -21,11 +21,30 @@ pub struct Roi {
     pub height: u32,
 }
 
+/// DCP profile table data for GPU upload (W4).
+///
+/// Each table is provided as flat `f32` data suitable for uploading as a 3D
+/// (or 1D) texture. `huesat` and `look` use `rgba16float` format with implicit
+/// alpha=1 for every texel; dims give the texture size. `tone_curve` is a 1-D
+/// `r32float` LUT of 4096 entries.
+#[derive(Clone)]
+pub struct DcpTextureData {
+    pub huesat: Vec<f32>,
+    pub huesat_dims: [u32; 3],
+    pub look: Vec<f32>,
+    pub look_dims: [u32; 3],
+    pub tone_curve: Vec<f32>,
+}
+
 pub struct RenderRequest<'a> {
     pub adjustments: AllAdjustments,
     pub mask_bitmaps: &'a [ImageBuffer<Luma<u8>, Vec<u8>>],
     pub lut: Option<Arc<Lut>>,
     pub roi: Option<Roi>,
+    /// DCP profile table data for GPU upload. When `Some` and
+    /// `adjustments.global.has_dcp != 0`, real DCP textures replace
+    /// the dummy bindings (§6.W4 req 3).
+    pub dcp_textures: Option<DcpTextureData>,
 }
 
 #[repr(C)]
@@ -1580,18 +1599,102 @@ impl GpuProcessor {
                     resource: wgpu::BindingResource::Sampler(&self.flare_sampler),
                 });
 
-                // DCP profile textures (W3) — dummy when no profile active.
+                // DCP profile textures (W4) — real data when a profile is active,
+                // dummy textures otherwise so the WGSL bindings are always present.
+                let (dcp_huesat_view, dcp_look_view, dcp_tc_view, _dcp_tex_guard) =
+                    if adjustments.global.has_dcp != 0
+                        && let Some(ref dcp) = request.dcp_textures
+                    {
+                        // Upload real DCP tables as 3-D / 1-D textures.
+                        let huesat_size = wgpu::Extent3d {
+                            width: dcp.huesat_dims[0],
+                            height: dcp.huesat_dims[1],
+                            depth_or_array_layers: dcp.huesat_dims[2],
+                        };
+                        let look_size = wgpu::Extent3d {
+                            width: dcp.look_dims[0],
+                            height: dcp.look_dims[1],
+                            depth_or_array_layers: dcp.look_dims[2],
+                        };
+                        let huesat_tex = device.create_texture_with_data(
+                            queue,
+                            &wgpu::TextureDescriptor {
+                                label: Some("DCP HueSatMap"),
+                                size: huesat_size,
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D3,
+                                format: wgpu::TextureFormat::Rgba16Float,
+                                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_DST,
+                                view_formats: &[],
+                            },
+                            TextureDataOrder::MipMajor,
+                            bytemuck::cast_slice(&dcp.huesat),
+                        );
+                        let look_tex = device.create_texture_with_data(
+                            queue,
+                            &wgpu::TextureDescriptor {
+                                label: Some("DCP LookTable"),
+                                size: look_size,
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D3,
+                                format: wgpu::TextureFormat::Rgba16Float,
+                                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_DST,
+                                view_formats: &[],
+                            },
+                            TextureDataOrder::MipMajor,
+                            bytemuck::cast_slice(&dcp.look),
+                        );
+                        let tc_tex = device.create_texture_with_data(
+                            queue,
+                            &wgpu::TextureDescriptor {
+                                label: Some("DCP ToneCurve"),
+                                size: wgpu::Extent3d {
+                                    width: dcp.tone_curve.len() as u32,
+                                    height: 1,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D1,
+                                format: wgpu::TextureFormat::R32Float,
+                                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_DST,
+                                view_formats: &[],
+                            },
+                            TextureDataOrder::MipMajor,
+                            bytemuck::cast_slice(&dcp.tone_curve),
+                        );
+                        let guard = (huesat_tex, look_tex, tc_tex);
+                        (
+                            guard.0.create_view(&Default::default()),
+                            guard.1.create_view(&Default::default()),
+                            guard.2.create_view(&Default::default()),
+                            Some(guard),
+                        )
+                    } else {
+                        (
+                            self.dcp_dummy_3d_view.clone(),
+                            self.dcp_dummy_3d_view.clone(),
+                            self.dcp_dummy_tc_view.clone(),
+                            None,
+                        )
+                    };
+
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 12,
-                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_3d_view),
+                    resource: wgpu::BindingResource::TextureView(&dcp_huesat_view),
                 });
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 13,
-                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_3d_view),
+                    resource: wgpu::BindingResource::TextureView(&dcp_look_view),
                 });
                 bind_group_entries.push(wgpu::BindGroupEntry {
                     binding: 14,
-                    resource: wgpu::BindingResource::TextureView(&self.dcp_dummy_tc_view),
+                    resource: wgpu::BindingResource::TextureView(&dcp_tc_view),
                 });
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

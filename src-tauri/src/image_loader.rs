@@ -876,6 +876,8 @@ pub async fn load_image(
         path,
         image: pristine_arc,
         is_raw,
+        raw_meta: None,
+        raw_bytes: None,
     });
 
     Ok(LoadImageResult {

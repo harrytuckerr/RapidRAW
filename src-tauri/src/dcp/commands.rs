@@ -573,3 +573,44 @@ pub fn log_discovery_roots() {
         }
     }
 }
+
+// ---- W4: profile resolution for the rendering pipeline --------------------
+
+use crate::dcp::model::DcpProfile;
+use crate::dcp::render::DcpRenderer;
+
+/// Resolve a profile selection for rendering.
+///
+/// Given the profile hex ID from the UI's `profile.base`, the in-memory
+/// registry, and the camera metadata from `RawImage`, this:
+/// 1. Looks up the `ProfileEntry` by content hash.
+/// 2. Parses the `.dcp` file into a `DcpProfile`.
+/// 3. Computes `as_shot_neutral` from the white-balance coefficients.
+/// 4. Builds a `DcpRenderer` with the precomputed matrices and tables.
+///
+/// Returns the renderer along with the profile (for `EmbedNever` checks).
+/// Errors are returned as strings suitable for logging; a missing profile
+/// or unparseable DCP is not fatal to the render.
+pub fn resolve_dcp_for_rendering(
+    registry: &ProfileRegistry,
+    profile_hex: &str,
+    wb_coeffs: [f32; 4],
+) -> Result<(DcpRenderer, DcpProfile), String> {
+    let entry = registry
+        .get_by_hex(profile_hex)
+        .ok_or_else(|| format!("profile '{profile_hex}' not found in registry"))?;
+
+    let profiles = crate::dcp::parser::parse_dcp(&entry.file_path)
+        .map_err(|e| format!("failed to parse DCP '{}': {e}", entry.file_path.display()))?;
+    let profile = profiles
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("DCP '{}' contained no profiles", entry.file_path.display()))?;
+
+    let as_shot_neutral = crate::image_processing::as_shot_neutral_from_wb(wb_coeffs);
+
+    let renderer = DcpRenderer::new(&profile, as_shot_neutral)
+        .map_err(|e| format!("failed to build DCP renderer: {e}"))?;
+
+    Ok((renderer, profile))
+}
