@@ -4,6 +4,7 @@ description = "A blazingly-fast, non-destructive, and GPU-accelerated RAW image 
 authors = ["Timon Käch"]
 edition = "2024"
 rust-version = "1.96"
+default-run = "RapidRAW"
 
 [lib]
 name = "rapidraw_lib"
