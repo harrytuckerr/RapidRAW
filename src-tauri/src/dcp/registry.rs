@@ -541,8 +541,9 @@ pub fn index_path(app_data_dir: &Path) -> PathBuf {
 }
 
 /// The Adobe auto-discover roots for the current platform (read-only,
-/// best-effort). Returns an empty vec on Linux (none standard) and is compiled
-/// out on Android (W8).
+/// best-effort). Compiled out entirely on Android (W8 §6.W8 req 3) — there is
+/// no Adobe directory structure on Android, so auto-discovery is not applicable.
+#[cfg(not(target_os = "android"))]
 pub fn adobe_discovery_roots() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
@@ -571,6 +572,13 @@ pub fn adobe_discovery_roots() -> Vec<PathBuf> {
     }
 }
 
+/// On Android, auto-discovery does not apply (§6.W8 req 3). The empty-vec stub
+/// keeps callsites compiling without conditional blocks at every use.
+#[cfg(target_os = "android")]
+pub fn adobe_discovery_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// Discover and index DCPs from the managed directory and Adobe roots, using
 /// the persisted index for fast invalidation (skip re-parsing unchanged
 /// files). XMP Looks are enumerated as `pending_xmp` — resolving them into
@@ -593,8 +601,10 @@ pub fn discover_profiles(
     let mut xmp_files: Vec<PathBuf> = Vec::new();
     collect_ext(&managed_looks_dir(app_data_dir), "xmp", &mut xmp_files);
 
-    // Adobe auto-discovery is best-effort and desktop-only; it must degrade
-    // silently if the directories are absent (they usually are).
+    // Adobe auto-discovery is desktop-only; it is compiled out on Android
+    // (§6.W8 req 3) where there is no Adobe directory structure. Managed import
+    // via SAF is the only profile acquisition path on that platform.
+    #[cfg(not(target_os = "android"))]
     for root in adobe_discovery_roots() {
         collect_ext(&root, "dcp", &mut dcp_files);
         collect_ext(&root, "xmp", &mut xmp_files);

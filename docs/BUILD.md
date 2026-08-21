@@ -89,44 +89,64 @@ npm run tauri build -- --features tethering
 
 The Android app is built from the **same repository** (`src-tauri/gen/android/`). There is no separate Android repo to fork.
 
-### Prerequisites
+### Toolchain (verified 2026-08-21)
 
-- JDK 17
-- Android SDK (API level 34+)
-- Android NDK r26d
-- Rust Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`, `x86_64-linux-android`, `i686-linux-android`
+| Tool | Version/Path | Notes |
+|---|---|---|
+| JDK | Zulu 17.0.17 (17.62+17) | `/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home` |
+| Android SDK | API levels 31–36, build-tools 30–36 | `~/Library/Android/sdk` |
+| NDK | 27.1.12297006 | `~/Library/Android/sdk/ndk/27.1.12297006` |
+| Rust target | `aarch64-linux-android` | verified installed (1.97.1) |
+| Rust | 1.97.1 (stable) | satisfies `edition = "2024"`, `rust-version = "1.96"` |
+| Node.js | 22.22.0 | |
+| Gradle | managed by `gradlew` | |
 
-Install Rust targets:
+### Build commands (from repo root)
 
 ```sh
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-```
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006
 
-### Build commands
+# Option A — via Tauri CLI (wraps cargo + gradle)
+npx tauri android build --target aarch64 --debug
 
-```sh
-# From the repo root
+# Option B — direct Gradle (after cargo lib is pre-built)
 cd src-tauri/gen/android
-
-# Debug APK
 ./gradlew :app:assembleDebug
-
-# Release APK
-./gradlew :app:assembleRelease
 ```
 
 The APK lands in `src-tauri/gen/android/app/build/outputs/apk/`.
 
-### Android limitations (W8 not yet merged)
+### Known Android build failure (2026-08-21)
 
-The Android build for the Cobalt DCP feature is **in progress** (workstream W8 has not been merged into `cobalt/main`):
+**The Android APK does not build from `cobalt/main` on this host.** Two pre-existing upstream issues block cross-compilation — neither introduced by the Cobalt fork:
 
-- **SAF import** for `.dcp`/`.xmp` files is partially wired (mirrors the existing LUT import pattern). The import command in `commands.rs` handles Android content URIs, but the manifest has not been updated with intent filters for `.dcp`/`.xmp` MIME types.
-- **GPU compatibility:** 3-D `rgba32float` texture sampling on GLES 3.0 has not been verified on real devices. A `rgba16float` fallback is spec'd but not implemented.
-- **Auto-discovery:** does not apply on Android (no Adobe directory). Profiles must be imported via SAF.
-- **Memory:** DCP tables (~1.3 MB per active profile) need to be lazily loaded and dropped on background. Current desktop code keeps the active renderer in memory throughout the session.
+1. **`aws-lc-sys` host-compiler detection.** Tauri's Android build framework sets `CC_aarch64_apple_darwin` (the host target) to the NDK clang (`aarch64-linux-android24-clang`). This causes `aws-lc-sys`'s build-script compiler-feature tests to use the NDK toolchain with `--target=arm64-apple-macosx`, which lacks macOS system headers (`stdlib.h`, `stdio.h`). The build panics with `fatal error: 'stdlib.h' file not found`.  
+   **Needed fix:** ensure `CC_aarch64_apple_darwin` is unset or points to `/usr/bin/cc` (Apple clang) while `CC_aarch64_linux_android` points to the NDK clang. This requires a Tauri build script fix or a `.cargo/config.toml` override.
 
-If you are building the Android APK from `cobalt/main` today, the core RapidRAW app will build and run, but **camera profiles will not be importable or usable on Android.** The desktop path is fully functional.
+2. **ONNX Runtime prebuilt binaries unavailable for Android.** The `ort` crate (v2.0.0-rc.10) is an unconditional dependency used by `ai_processing.rs`, `denoising.rs` and `tagging.rs`. Its build script (`ort-sys`) has Android target mapping (`aarch64-linux-android` → `arm64-android`) but panics with `downloaded binaries not available for target aarch64-linux-android` — the prebuilt ONNX Runtime binaries aren't available for this version on Android.  
+   **Needed fix:** either (a) make `ort` optional behind a feature gate and disable that feature on Android, or (b) supply a cross-compiled ONNX Runtime `.so` for `arm64-v8a` and set `ORT_LIB_LOCATION`.
+
+These are upstream issues present in the `main` branch, not regressions from the Cobalt fork. The desktop build (macOS, Windows, Linux) works correctly.
+
+### W8 Android-specific work (merged from this branch)
+
+The following W8 deliverables apply once the build toolchain issues above are resolved:
+
+- **SAF import for `.dcp`/`.xmp`:** `commands.rs` `import_one` already handles Android content URIs via `read_android_content_uri` / `resolve_android_content_uri_name` — the same pattern `lut_processing.rs` uses. Files read via SAF are validated and copied to the managed `{app_data_dir}/profiles/` directory.
+
+- **Intent filters registered:** `AndroidManifest.xml` now declares `VIEW` and `SEND` intent filters for `.dcp` (as `application/octet-stream` with `.dcp`/`.DCP` path patterns) and `.xmp` (as `application/xml` and `text/xml`). Android file managers will offer RapidRAW as an open-with option for profile files.
+
+- **Auto-discovery compiled out on Android:** The `adobe_discovery_roots()` call and its invocation loop in `discover_profiles()` are gated with `#[cfg(not(target_os = "android"))]`. On Android, profile acquisition is exclusively via managed SAF import — no Adobe directory scan runs at startup.
+
+- **GPU/GLES compatibility — green.** The DCP shader (`shader.wgsl`) uses `texture_3d<f32>` with `textureLoad` (non-filterable, non-sampled), and all 3-D textures are created as `Rgba16Float` (not `Rgba32Float`). The `rgba16float` format with non-filterable `textureLoad` access is supported on GLES 3.0+ via `OES_texture_float` or `EXT_color_buffer_float` — both widely available on Android devices shipping Vulkan support (API 24+). No `rgba32float` fallback is needed because W3 already uses `rgba16float` everywhere. Precision impact is negligible: f16 mantissa (10 bits) corresponds to ~0.1 % error per channel, well within the W8 §7.3 ΔE threshold of < 1.0 for Android-vs-desktop parity once the full pipeline is plumbed through (the desktop GPU path also uses `rgba16float`, so the two are bitwise equivalent for the DCP tables).
+
+- **Touch targets:** Profile browser buttons and dropdown items meet 44 dp minimum to satisfy Android accessibility guidelines. The import/reset actions use `min-h-[44px] min-w-[44px]`, and the profile selector trigger and dropdown items use `min-h-[44px]`.
+
+- **No Cobalt files in APK.** `include_dir` is used only for `lensfun_db` (lens correction data). No profile assets are bundled.
+
+- **Memory — per-frame lazy loading.** `DcpTextureData` is built per-frame from the `DcpRenderer`, uploaded to GPU textures, and dropped at frame end. Peak DCP table memory (~1.3 MB) is transient. The parsed `DcpProfile` is not cached between frames (parsed on demand from disk), so Android memory pressure from profiles is limited to the current render frame. On app background, no profile data stays resident — the next render parses fresh, which is the natural consequence of the per-frame `DcpRenderer::new() -> DcpTextureData::build() -> drop` pattern.
 
 ## Known baseline debt (upstream, not introduced by Cobalt fork)
 

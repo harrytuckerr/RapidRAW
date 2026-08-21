@@ -134,7 +134,7 @@ export default function ProfilePanel({
         </Text>
         <div className="flex items-center gap-1">
           <button
-            className="p-1.5 rounded-full hover:bg-surface transition-colors"
+            className="p-2.5 rounded-full hover:bg-surface transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
             onClick={handleImport}
             disabled={isImporting}
             data-tooltip={t('profiles.importTooltip')}
@@ -143,7 +143,7 @@ export default function ProfilePanel({
           </button>
           {hasAnyProfile && (
             <button
-              className="p-1.5 rounded-full hover:bg-surface transition-colors"
+              className="p-2.5 rounded-full hover:bg-surface transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
               onClick={handleClear}
               data-tooltip={t('profiles.resetTooltip')}
             >
