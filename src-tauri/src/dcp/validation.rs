@@ -294,10 +294,7 @@ mod tests {
     /// Parse and validate every .wgsl shader under src/shaders/ using naga.
     #[test]
     fn all_shaders_validate_with_naga() {
-        let shader_dir = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/shaders"
-        ));
+        let shader_dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/shaders"));
         assert!(shader_dir.is_dir(), "shader dir not found");
 
         let caps = naga::valid::Capabilities::all();
@@ -305,13 +302,13 @@ mod tests {
 
         // Production shader: concatenated dcp.wgsl + shader.wgsl.
         {
-            let dcp_src = std::fs::read_to_string(shader_dir.join("dcp.wgsl"))
-                .expect("read dcp.wgsl");
-            let main_src = std::fs::read_to_string(shader_dir.join("shader.wgsl"))
-                .expect("read shader.wgsl");
+            let dcp_src =
+                std::fs::read_to_string(shader_dir.join("dcp.wgsl")).expect("read dcp.wgsl");
+            let main_src =
+                std::fs::read_to_string(shader_dir.join("shader.wgsl")).expect("read shader.wgsl");
             let combined = format!("{}\n{}", dcp_src, main_src);
-            let module = naga::front::wgsl::parse_str(&combined)
-                .expect("production shader: naga parse");
+            let module =
+                naga::front::wgsl::parse_str(&combined).expect("production shader: naga parse");
             let mut validator = naga::valid::Validator::new(flags, caps);
             if let Err(e) = validator.validate(&module) {
                 panic!("production shader: naga validation failed: {e}");
@@ -330,8 +327,8 @@ mod tests {
             if stem == "dcp" || stem == "shader" {
                 continue;
             }
-            let src = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+            let src =
+                std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
             let module = naga::front::wgsl::parse_str(&src)
                 .unwrap_or_else(|e| panic!("{stem}.wgsl: naga parse: {e}"));
             let mut validator = naga::valid::Validator::new(flags, caps);
@@ -344,8 +341,8 @@ mod tests {
         // Parity entry point.
         {
             let parity_src = super::parity_shader_source();
-            let module = naga::front::wgsl::parse_str(&parity_src)
-                .expect("parity shader: naga parse");
+            let module =
+                naga::front::wgsl::parse_str(&parity_src).expect("parity shader: naga parse");
             let mut validator = naga::valid::Validator::new(flags, caps);
             if let Err(e) = validator.validate(&module) {
                 panic!("parity shader: naga validation failed: {e}");
@@ -1083,9 +1080,18 @@ mod tests {
             let so = row * pbpr as usize;
             for col in 0..512 {
                 let pi = (row * 512 + col) * 3;
-                let gr = f32::from_ne_bytes(data[so + col * 16..so + col * 16 + 4].try_into().unwrap());
-                let gg = f32::from_ne_bytes(data[so + col * 16 + 4..so + col * 16 + 8].try_into().unwrap());
-                let gb = f32::from_ne_bytes(data[so + col * 16 + 8..so + col * 16 + 12].try_into().unwrap());
+                let gr =
+                    f32::from_ne_bytes(data[so + col * 16..so + col * 16 + 4].try_into().unwrap());
+                let gg = f32::from_ne_bytes(
+                    data[so + col * 16 + 4..so + col * 16 + 8]
+                        .try_into()
+                        .unwrap(),
+                );
+                let gb = f32::from_ne_bytes(
+                    data[so + col * 16 + 8..so + col * 16 + 12]
+                        .try_into()
+                        .unwrap(),
+                );
                 let d = (gr - cpu_ws[pi])
                     .abs()
                     .max((gg - cpu_ws[pi + 1]).abs())
