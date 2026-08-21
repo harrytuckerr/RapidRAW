@@ -1511,6 +1511,7 @@ pub struct GlobalAdjustments {
     pub dcp_amount: f32,
     pub dcp_look_encoding: u32,
     pub dcp_huesat_encoding: u32,
+    pub dcp_baseline_exposure_offset: f32,
     // vec4<u32> in WGSL — 16 bytes each, alignment 16
     pub dcp_huesat_dims: [u32; 4], // [hue_div, sat_div, val_div, _pad]
     pub dcp_look_dims: [u32; 4],   // [hue_div, sat_div, val_div, _pad]
@@ -2358,6 +2359,7 @@ fn get_global_adjustments_from_json(
         dcp_amount: 1.0,
         dcp_look_encoding: 0,
         dcp_huesat_encoding: 0,
+        dcp_baseline_exposure_offset: 0.0,
         dcp_huesat_dims: [0, 0, 0, 0],
         dcp_look_dims: [0, 0, 0, 0],
         cam_to_prophoto: GpuMat3::default(),
@@ -2559,6 +2561,7 @@ pub fn set_dcp_uniforms(
     global.dcp_amount = amount;
     global.cam_to_prophoto = nalgebra_m3_to_gpu_mat3(&renderer.cam_to_prophoto());
     global.prophoto_to_working = nalgebra_m3_to_gpu_mat3(&renderer.prophoto_to_working());
+    global.dcp_baseline_exposure_offset = renderer.baseline_exposure_offset();
 
     // HueSatMap dims and encoding.
     if let Some(hsm) = renderer.hue_sat_map() {

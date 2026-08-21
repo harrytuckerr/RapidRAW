@@ -28,15 +28,14 @@ pub use crate::dcp::delta_e::{
 // GPU uniform helpers for W3 parity test
 // ---------------------------------------------------------------------------
 
-/// Minimal uniform struct matching `DcpParityUniforms` in dcp_parity.wgsl.
-/// Only the fields needed for the DCP stage — no legacy adjustments.
+/// Uniform block matching the parity entry point's uniform struct in WGSL.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct DcpParityUniforms {
-    is_raw_image: u32,
     has_dcp: u32,
-    _pad_a: u32,
-    _pad_b: u32,
+    dcp_huesat_encoding: u32,
+    dcp_look_encoding: u32,
+    dcp_baseline_exposure_offset: f32,
     dcp_huesat_dims: [u32; 4],
     dcp_look_dims: [u32; 4],
     cam_to_prophoto: [[f32; 4]; 3],
@@ -54,6 +53,63 @@ fn mat3_to_cols(m: Mat3) -> [[f32; 4]; 3] {
 }
 
 // ---------------------------------------------------------------------------
+/// WGSL source for the parity entry point.
+const PARITY_ENTRY_WGSL: &str = r##"
+struct ParUniforms {
+    has_dcp: u32,
+    dcp_huesat_encoding: u32,
+    dcp_look_encoding: u32,
+    dcp_baseline_exposure_offset: f32,
+    dcp_huesat_dims: vec4<u32>,
+    dcp_look_dims: vec4<u32>,
+    cam_to_prophoto: mat3x3<f32>,
+    prophoto_to_working: mat3x3<f32>,
+}
+
+@group(0) @binding(0) var input_texture: texture_2d<f32>;
+@group(0) @binding(1) var output_texture: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var<storage, read> u: ParUniforms;
+@group(0) @binding(3) var dcp_huesat_tex: texture_3d<f32>;
+@group(0) @binding(4) var dcp_look_tex: texture_3d<f32>;
+@group(0) @binding(5) var dcp_tone_curve_tex: texture_1d<f32>;
+
+@compute @workgroup_size(8, 8, 1)
+fn main_parity(@builtin(global_invocation_id) id: vec3<u32>) {
+    let out_dims = vec2<u32>(textureDimensions(output_texture));
+    if (id.x >= out_dims.x || id.y >= out_dims.y) { return; }
+
+    var rgb = textureLoad(input_texture, id.xy, 0).rgb;
+
+    if (u.has_dcp != 0u) {
+        rgb = u.cam_to_prophoto * rgb;
+
+        if u.dcp_huesat_dims.x > 0u {
+            rgb = dcp_apply_hsv_table(rgb, dcp_huesat_tex,
+                                       u.dcp_huesat_dims, u.dcp_huesat_encoding);
+        }
+
+        rgb = dcp_baseline_exposure(rgb, u.dcp_baseline_exposure_offset);
+
+        if u.dcp_look_dims.x > 0u {
+            rgb = dcp_apply_hsv_table(rgb, dcp_look_tex,
+                                       u.dcp_look_dims, u.dcp_look_encoding);
+        }
+
+        rgb = dcp_apply_tone_curve(rgb, dcp_tone_curve_tex);
+
+        rgb = u.prophoto_to_working * rgb;
+    }
+
+    textureStore(output_texture, id.xy, vec4<f32>(rgb, 1.0));
+}
+"##;
+
+/// Build the parity shader source by concatenating dcp.wgsl with the parity entry point.
+pub(crate) fn parity_shader_source() -> String {
+    let dcp = include_str!("../shaders/dcp.wgsl");
+    format!("{}\n{}", dcp, PARITY_ENTRY_WGSL)
+}
+
 // Synthetic profile builders
 // ---------------------------------------------------------------------------
 
@@ -232,6 +288,71 @@ mod tests {
         0.0,
         1.211_967_545_638_945_2,
     ];
+
+    // ---- WGSL shader validation (CI -- no GPU required) -------------------
+
+    /// Parse and validate every .wgsl shader under src/shaders/ using naga.
+    #[test]
+    fn all_shaders_validate_with_naga() {
+        let shader_dir = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/shaders"
+        ));
+        assert!(shader_dir.is_dir(), "shader dir not found");
+
+        let caps = naga::valid::Capabilities::all();
+        let flags = naga::valid::ValidationFlags::all();
+
+        // Production shader: concatenated dcp.wgsl + shader.wgsl.
+        {
+            let dcp_src = std::fs::read_to_string(shader_dir.join("dcp.wgsl"))
+                .expect("read dcp.wgsl");
+            let main_src = std::fs::read_to_string(shader_dir.join("shader.wgsl"))
+                .expect("read shader.wgsl");
+            let combined = format!("{}\n{}", dcp_src, main_src);
+            let module = naga::front::wgsl::parse_str(&combined)
+                .expect("production shader: naga parse");
+            let mut validator = naga::valid::Validator::new(flags, caps);
+            if let Err(e) = validator.validate(&module) {
+                panic!("production shader: naga validation failed: {e}");
+            }
+            eprintln!("naga: production shader VALID");
+        }
+
+        // Standalone shaders.
+        for entry in std::fs::read_dir(shader_dir).expect("read shader dir") {
+            let entry = entry.expect("entry");
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("wgsl") {
+                continue;
+            }
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            if stem == "dcp" || stem == "shader" {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+            let module = naga::front::wgsl::parse_str(&src)
+                .unwrap_or_else(|e| panic!("{stem}.wgsl: naga parse: {e}"));
+            let mut validator = naga::valid::Validator::new(flags, caps);
+            if let Err(e) = validator.validate(&module) {
+                panic!("{stem}.wgsl: naga validation failed: {e}");
+            }
+            eprintln!("naga: {stem}.wgsl VALID");
+        }
+
+        // Parity entry point.
+        {
+            let parity_src = super::parity_shader_source();
+            let module = naga::front::wgsl::parse_str(&parity_src)
+                .expect("parity shader: naga parse");
+            let mut validator = naga::valid::Validator::new(flags, caps);
+            if let Err(e) = validator.validate(&module) {
+                panic!("parity shader: naga validation failed: {e}");
+            }
+            eprintln!("naga: parity shader VALID");
+        }
+    }
 
     // ---- identity / neutral-axis tests (delta-E quantified) ----------------
 
@@ -618,15 +739,13 @@ mod tests {
 
     /// GPU-vs-CPU parity test: renders 512x512 pseudo-random camera-RGB values
     /// through BOTH the CPU DcpRenderer and the GPU WGSL pipeline (using the
-    /// minimal `dcp_parity.wgsl` shader), comparing per-channel outputs in
-    /// the working space.
+    /// SAME dcp.wgsl functions as the production shader), comparing per-channel
+    /// outputs in the working space.
     ///
-    /// Acceptance: max per-channel abs diff < 1e-3, mean < 1e-4 (§6.W3).
+    /// Acceptance: max per-channel abs diff < 1e-3, mean < 1e-4.
     ///
-    /// Requires a headless GPU adapter; if none is available (CI / headless
-    /// environments) the test prints a diagnostic and passes. To force the
-    /// comparison on a machine with a GPU:
-    ///   cargo test gpu_vs_cpu_parity -- --ignored --nocapture
+    /// Requires a headless GPU adapter; if none is available, the test prints
+    /// a diagnostic and refrains from asserting.
     #[test]
     #[ignore = "requires GPU adapter (headless wgpu); run with --ignored"]
     fn gpu_vs_cpu_parity() {
@@ -656,9 +775,9 @@ mod tests {
         }
 
         // ---- 3. CPU render (ProPhoto, then to working space) ----------------
-        let mut cpu_rgb = test_rgb.clone();
-        cpu.render_slice(&mut cpu_rgb);
-        for chunk in cpu_rgb.chunks_mut(3) {
+        let mut cpu_ws = test_rgb.clone();
+        cpu.render_slice(&mut cpu_ws);
+        for chunk in cpu_ws.chunks_mut(3) {
             let ws = cpu.to_working_space([chunk[0], chunk[1], chunk[2]]);
             chunk[0] = ws[0];
             chunk[1] = ws[1];
@@ -713,24 +832,31 @@ mod tests {
         );
         let in_view = in_tex.create_view(&Default::default());
 
+        // Output texture: rgba32float for lossless readback.
         let out_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("p-out"),
             size: tex_size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba32Float,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&Default::default());
 
-        // Uniforms: DCP matrices from CPU renderer, identity tables/curve.
+        // Uniforms: DCP matrices, dims, encodings from CPU renderer.
         let u = DcpParityUniforms {
-            is_raw_image: 1,
             has_dcp: 1,
-            _pad_a: 0,
-            _pad_b: 0,
+            dcp_huesat_encoding: match cpu.hue_sat_map_encoding() {
+                TableEncoding::Linear => 0,
+                TableEncoding::Srgb => 1,
+            },
+            dcp_look_encoding: match cpu.look_table_encoding() {
+                TableEncoding::Linear => 0,
+                TableEncoding::Srgb => 1,
+            },
+            dcp_baseline_exposure_offset: cpu.baseline_exposure_offset(),
             dcp_huesat_dims: [0; 4],
             dcp_look_dims: [0; 4],
             cam_to_prophoto: mat3_to_cols(cpu.cam_to_prophoto()),
@@ -782,10 +908,11 @@ mod tests {
         );
         let tc_v = tc_tex.create_view(&Default::default());
 
-        // Compile the minimal DCP-only shader.
+        // Compile the parity shader: shared dcp.wgsl + parity entry point.
+        let parity_src = parity_shader_source();
         let sm = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("p-sm"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/dcp_parity.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(parity_src.into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -806,7 +933,7 @@ mod tests {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        format: wgpu::TextureFormat::Rgba32Float,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -862,7 +989,7 @@ mod tests {
             label: Some("p-pipe"),
             layout: Some(&pl),
             module: &sm,
-            entry_point: Some("main"),
+            entry_point: Some("main_parity"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -906,9 +1033,9 @@ mod tests {
         }
         queue.submit(Some(enc.finish()));
 
-        // Readback.
+        // Readback. rgba32float = 16 bytes per pixel, f32 values direct.
         let al = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let pbpr = ((512 * 4) + al - 1) & !(al - 1);
+        let pbpr = ((512 * 16) + al - 1) & !(al - 1);
         let rb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("p-rb"),
             size: (pbpr * 512) as u64,
@@ -949,20 +1076,20 @@ mod tests {
         let data = sl.get_mapped_range().to_vec();
         rb.unmap();
 
-        // ---- 5. Compare ----------------------------------------------------
+        // ---- 5. Compare in working space (f32, like-for-like) ----------------
         let mut max_diff: f32 = 0.0;
         let mut sum: f64 = 0.0;
         for row in 0..512usize {
             let so = row * pbpr as usize;
             for col in 0..512 {
                 let pi = (row * 512 + col) * 3;
-                let gr = (data[so + col * 4] as f32) / 255.0;
-                let gg = (data[so + col * 4 + 1] as f32) / 255.0;
-                let gb = (data[so + col * 4 + 2] as f32) / 255.0;
-                let d = (gr - cpu_rgb[pi])
+                let gr = f32::from_ne_bytes(data[so + col * 16..so + col * 16 + 4].try_into().unwrap());
+                let gg = f32::from_ne_bytes(data[so + col * 16 + 4..so + col * 16 + 8].try_into().unwrap());
+                let gb = f32::from_ne_bytes(data[so + col * 16 + 8..so + col * 16 + 12].try_into().unwrap());
+                let d = (gr - cpu_ws[pi])
                     .abs()
-                    .max((gg - cpu_rgb[pi + 1]).abs())
-                    .max((gb - cpu_rgb[pi + 2]).abs());
+                    .max((gg - cpu_ws[pi + 1]).abs())
+                    .max((gb - cpu_ws[pi + 2]).abs());
                 max_diff = max_diff.max(d);
                 sum += d as f64;
             }

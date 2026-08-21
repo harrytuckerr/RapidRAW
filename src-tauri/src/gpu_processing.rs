@@ -794,9 +794,14 @@ impl GpuProcessor {
             ..Default::default()
         });
 
+        let shader_src = format!(
+            "{}\n{}",
+            include_str!("shaders/dcp.wgsl"),
+            include_str!("shaders/shader.wgsl")
+        );
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Image Processing Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
 
         let mut bind_group_layout_entries = vec![
