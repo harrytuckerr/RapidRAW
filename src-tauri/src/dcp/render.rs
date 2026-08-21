@@ -374,6 +374,11 @@ impl DcpRenderer {
         self.prophoto_to_working
     }
 
+    /// The precomputed camera → ProPhoto (D50) matrix, for W3/W4 validation.
+    pub fn cam_to_prophoto(&self) -> Mat3 {
+        self.cam_to_prophoto
+    }
+
     /// Render a slice of interleaved RGB `f32` values in place, using a rayon
     /// parallel iterator. `px` must contain a whole number of pixels.
     pub fn render_slice(&self, px: &mut [f32]) {

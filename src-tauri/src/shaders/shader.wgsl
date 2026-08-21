@@ -115,6 +115,16 @@ struct GlobalAdjustments {
     halation_amount: f32,
     flare_amount: f32,
     sharpness_threshold: f32,
+
+    // --- DCP profile pipeline (W3) ---------------------------------------
+    has_dcp: u32,
+    dcp_amount: f32,
+    dcp_look_encoding: u32,
+    dcp_huesat_encoding: u32,
+    dcp_huesat_dims: vec4<u32>,
+    dcp_look_dims: vec4<u32>,
+    cam_to_prophoto: mat3x3<f32>,
+    prophoto_to_working: mat3x3<f32>,
 }
 
 struct MaskAdjustments {
@@ -210,6 +220,11 @@ const HSL_RANGES: array<HslRange, 8> = array<HslRange, 8>(
 
 @group(0) @binding(10) var flare_texture: texture_2d<f32>;
 @group(0) @binding(11) var flare_sampler: sampler;
+
+// DCP profile textures (W3) — bindings 12-14
+@group(0) @binding(12) var dcp_huesat_tex: texture_3d<f32>;
+@group(0) @binding(13) var dcp_look_tex: texture_3d<f32>;
+@group(0) @binding(14) var dcp_tone_curve_tex: texture_1d<f32>;
 
 const LUMA_COEFF = vec3<f32>(0.2126, 0.7152, 0.0722);
 
@@ -1607,6 +1622,169 @@ fn apply_halation(
     return contrast_reduced + halation_glow * amount * 2.5;
 }
 
+// ---- DCP profile pipeline (W3 GPU/WGSL) -----------------------------------
+// Ports W2's render.rs chain (§4.2-§4.5). Runs BEFORE all existing adjustments
+// when has_dcp != 0u. Early-out at zero cost when disabled.
+
+fn dcp_linear_to_srgb_ext(x: f32) -> f32 {
+    let a = abs(x);
+    let cutoff = 0.0031308;
+    let lower = a * 12.92;
+    let higher = 1.055 * pow(a, 1.0 / 2.4) - 0.055;
+    let v = select(higher, lower, a <= cutoff);
+    return sign(x) * v;
+}
+
+fn dcp_srgb_to_linear_ext(x: f32) -> f32 {
+    let a = abs(x);
+    let cutoff = 0.04045;
+    let lower = a / 12.92;
+    let higher = pow((a + 0.055) / 1.055, 2.4);
+    let v = select(higher, lower, a <= cutoff);
+    return sign(x) * v;
+}
+
+fn dcp_table_fetch(table: texture_3d<f32>, h: u32, s: u32, v: u32, hue_div: u32) -> vec3<f32> {
+    let h_w = h % hue_div;
+    let coord = vec3<i32>(i32(h_w), i32(s), i32(v));
+    return textureLoad(table, coord, 0).xyz;
+}
+
+fn dcp_sample_table(
+    table: texture_3d<f32>,
+    hue_dim: u32, sat_dim: u32, val_dim: u32,
+    hue_coord: f32, sat_coord: f32, val_coord: f32,
+) -> vec3<f32> {
+    let h_fl = floor(hue_coord);
+    let fh = hue_coord - h_fl;
+    let h0 = u32(h_fl) % hue_dim;
+    let h1 = (h0 + 1u) % hue_dim;
+
+    let sf = clamp(sat_coord * f32(sat_dim - 1u), 0.0, f32(sat_dim - 1u));
+    let s0 = u32(floor(sf));
+    let s1 = min(s0 + 1u, sat_dim - 1u);
+    let fs = sf - f32(s0);
+
+    var v0: u32 = 0u;
+    var v1: u32 = 0u;
+    var fv: f32 = 0.0;
+    if val_dim > 1u {
+        let vf = clamp(val_coord * f32(val_dim - 1u), 0.0, f32(val_dim - 1u));
+        v0 = u32(floor(vf));
+        v1 = min(v0 + 1u, val_dim - 1u);
+        fv = vf - f32(v0);
+    }
+
+    let c000 = dcp_table_fetch(table, h0, s0, v0, hue_dim);
+    let c100 = dcp_table_fetch(table, h1, s0, v0, hue_dim);
+    let c010 = dcp_table_fetch(table, h0, s1, v0, hue_dim);
+    let c110 = dcp_table_fetch(table, h1, s1, v0, hue_dim);
+    let c001 = dcp_table_fetch(table, h0, s0, v1, hue_dim);
+    let c101 = dcp_table_fetch(table, h1, s0, v1, hue_dim);
+    let c011 = dcp_table_fetch(table, h0, s1, v1, hue_dim);
+    let c111 = dcp_table_fetch(table, h1, s1, v1, hue_dim);
+
+    let w000 = (1.0 - fh) * (1.0 - fs) * (1.0 - fv);
+    let w100 = fh * (1.0 - fs) * (1.0 - fv);
+    let w010 = (1.0 - fh) * fs * (1.0 - fv);
+    let w110 = fh * fs * (1.0 - fv);
+    let w001 = (1.0 - fh) * (1.0 - fs) * fv;
+    let w101 = fh * (1.0 - fs) * fv;
+    let w011 = (1.0 - fh) * fs * fv;
+    let w111 = fh * fs * fv;
+
+    return c000 * w000 + c100 * w100 + c010 * w010 + c110 * w110
+         + c001 * w001 + c101 * w101 + c011 * w011 + c111 * w111;
+}
+
+fn dcp_apply_hsv_table(
+    cam_rgb: vec3<f32>,
+    table: texture_3d<f32>,
+    dims: vec4<u32>,
+    encoding: u32,
+) -> vec3<f32> {
+    var rgb_enc = cam_rgb;
+    if encoding == 1u {
+        rgb_enc = vec3<f32>(
+            dcp_linear_to_srgb_ext(cam_rgb.r),
+            dcp_linear_to_srgb_ext(cam_rgb.g),
+            dcp_linear_to_srgb_ext(cam_rgb.b),
+        );
+    }
+
+    let hsv = rgb_to_hsv(rgb_enc);
+
+    let hue_coord = (hsv.x / 360.0) * f32(dims.x);
+    let sat_coord = hsv.y;
+    let val_coord = select(0.0, hsv.z, dims.z > 1u);
+
+    let entry = dcp_sample_table(table, dims.x, dims.y, dims.z,
+                                  hue_coord, sat_coord, val_coord);
+    let hue_shift = entry.x;
+    let sat_scale = entry.y;
+    let val_scale = entry.z;
+
+    let h2 = (hsv.x + hue_shift) % 360.0;
+    let s2 = clamp(hsv.y * sat_scale, 0.0, 1.0);
+    let v2 = hsv.z * val_scale;
+
+    let rgb2 = hsv_to_rgb(vec3<f32>(h2, s2, v2));
+
+    if encoding == 1u {
+        return vec3<f32>(
+            dcp_srgb_to_linear_ext(rgb2.r),
+            dcp_srgb_to_linear_ext(rgb2.g),
+            dcp_srgb_to_linear_ext(rgb2.b),
+        );
+    }
+    return rgb2;
+}
+
+fn dcp_eval_tone_curve(lut: texture_1d<f32>, x: f32) -> f32 {
+    let lut_len = 4096u;
+    if x <= 0.0 {
+        let y0 = textureLoad(lut, vec2<i32>(0, 0), 0).x;
+        let y1 = textureLoad(lut, vec2<i32>(1, 0), 0).x;
+        return max(y0 + x * (y1 - y0) * f32(lut_len - 1u), 0.0);
+    }
+    if x >= 1.0 {
+        let last = i32(lut_len - 1u);
+        let y_last = textureLoad(lut, vec2<i32>(last, 0), 0).x;
+        let y_prev = textureLoad(lut, vec2<i32>(last - 1, 0), 0).x;
+        return max(y_last + (x - 1.0) * (y_last - y_prev) * f32(lut_len - 1u), 0.0);
+    }
+    let f = x * f32(lut_len - 1u);
+    let i = u32(floor(f));
+    let t = f - f32(i);
+    let idx = i32(min(i, lut_len - 2u));
+    let v0 = textureLoad(lut, vec2<i32>(idx, 0), 0).x;
+    let v1 = textureLoad(lut, vec2<i32>(idx + 1, 0), 0).x;
+    return v0 + (v1 - v0) * t;
+}
+
+fn dcp_apply_tone_curve(rgb: vec3<f32>, lut: texture_1d<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        dcp_eval_tone_curve(lut, rgb.r),
+        dcp_eval_tone_curve(lut, rgb.g),
+        dcp_eval_tone_curve(lut, rgb.b),
+    );
+}
+
+fn dcp_apply(cam_rgb: vec3<f32>) -> vec3<f32> {
+    let ad = adjustments.global;
+    var rgb = ad.cam_to_prophoto * cam_rgb;
+    if ad.dcp_huesat_dims.x > 0u {
+        rgb = dcp_apply_hsv_table(rgb, dcp_huesat_tex,
+                                   ad.dcp_huesat_dims, ad.dcp_huesat_encoding);
+    }
+    if ad.dcp_look_dims.x > 0u {
+        rgb = dcp_apply_hsv_table(rgb, dcp_look_tex,
+                                   ad.dcp_look_dims, ad.dcp_look_encoding);
+    }
+    rgb = dcp_apply_tone_curve(rgb, dcp_tone_curve_tex);
+    return rgb;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let out_dims = vec2<u32>(textureDimensions(output_texture));
@@ -1634,6 +1812,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         initial_linear_rgb = srgb_to_linear(color_from_texture);
     } else {
         initial_linear_rgb = color_from_texture;
+    }
+
+    // --- DCP profile pipeline (W3) — runs BEFORE all existing adjustments ---
+    // Early-out: zero-cost when no profile is active. Output bit-identical to
+    // upstream when has_dcp == 0 (acceptance criterion).
+    if (adjustments.global.has_dcp != 0u) {
+        let prophoto_rgb = dcp_apply(initial_linear_rgb);
+        initial_linear_rgb = adjustments.global.prophoto_to_working * prophoto_rgb;
     }
 
     var t_exposure = adjustments.global.exposure;
